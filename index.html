@@ -1,0 +1,1480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aerial Imagery Explorer</title>
+
+<!-- MapLibre GL JS -->
+<link href="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.js"></script>
+
+<!-- FlatGeobuf 3.35.0 — flatgeobuf.deserialize(url, rect) works correctly in this version -->
+<script src="https://unpkg.com/flatgeobuf@3.35.0/dist/flatgeobuf-geojson.min.js"></script>
+<!-- proj4js for WGS84 <-> EPSG:2193 (NZTM2000) conversion -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
+
+<!-- GeoTIFF for COG streaming — WEBP tiles decoded natively via Pool -->
+<script src="https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js"></script>
+<!-- @esri/lerc: loaded on demand for LERC/LERC+Zstd COGs (not all layers need this) -->
+<script>
+window._lercReady = new Promise((resolve, reject) => {
+  const urls = [
+    'https://js.arcgis.com/lerc/lerc.min.js',
+    'https://cdn.jsdelivr.net/npm/@esri/lerc@4.0.1/dist/browser/lerc.min.js',
+    'https://unpkg.com/@esri/lerc@4.0.1/dist/browser/lerc.min.js',
+  ];
+  let i = 0;
+  function tryNext() {
+    if (i >= urls.length) { reject(new Error('All LERC CDNs failed')); return; }
+    const s = document.createElement('script');
+    s.src = urls[i++];
+    s.onload = () => {
+      const lib = window.Lerc || window.LercDecode;
+      if (!lib || !lib.decode) { tryNext(); return; }
+      window.Lerc = lib;
+      (typeof lib.load === 'function' ? lib.load() : Promise.resolve())
+        .then(() => resolve(lib)).catch(tryNext);
+    };
+    s.onerror = tryNext;
+    document.head.appendChild(s);
+  }
+  tryNext();
+});
+</script>
+<!-- zstd-codec + fzstd: for native ZSTD-compressed COGs (TIFF compression 50003) -->
+<!-- geotiff.js 2.1.3 checks for window.ZstdCodec; fzstd as fallback for newer builds -->
+<script>
+window._zstdReady = new Promise((resolve, reject) => {
+  // Try zstd-codec first (matches geotiff.js 2.1.x internal check)
+  // then fzstd (geotiff.js 2.2+), then reject
+  const candidates = [
+    { url: 'https://cdn.jsdelivr.net/npm/zstd-codec@0.1.5/dist/zstd-codec.min.js',
+      check: () => window.ZstdCodec,
+      init: () => new Promise(res => window.ZstdCodec.run(zstd => res(zstd))) },
+    { url: 'https://unpkg.com/zstd-codec@0.1.5/dist/zstd-codec.min.js',
+      check: () => window.ZstdCodec,
+      init: () => new Promise(res => window.ZstdCodec.run(zstd => res(zstd))) },
+    { url: 'https://cdn.jsdelivr.net/npm/fzstd@0.1.1/umd/index.js',
+      check: () => window.fzstd && window.fzstd.decompress,
+      init: () => Promise.resolve(window.fzstd) },
+    { url: 'https://unpkg.com/fzstd@0.1.1/umd/index.js',
+      check: () => window.fzstd && window.fzstd.decompress,
+      init: () => Promise.resolve(window.fzstd) },
+  ];
+  let i = 0;
+  function tryNext() {
+    if (i >= candidates.length) { reject(new Error('All Zstd CDNs failed')); return; }
+    const c = candidates[i++];
+    const s = document.createElement('script');
+    s.src = c.url;
+    s.onload = () => {
+      if (!c.check()) { tryNext(); return; }
+      c.init().then(resolve).catch(tryNext);
+    };
+    s.onerror = tryNext;
+    document.head.appendChild(s);
+  }
+  tryNext();
+});
+</script>
+
+<!-- Sentry error tracking -->
+<script src="https://browser.sentry-cdn.com/7.99.0/bundle.min.js" crossorigin="anonymous"></script>
+
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #0a0c0f;
+    --surface:  #111419;
+    --surface2: #181c23;
+    --border:   rgba(255,255,255,0.07);
+    --accent:   #e8ff47;
+    --accent2:  #47c8ff;
+    --text:     #e2e8f0;
+    --muted:    #6b7280;
+    --danger:   #ff6b47;
+    --panel-w:  420px;
+  }
+
+  html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: 'Syne', sans-serif; }
+
+  #map { position: fixed; inset: 0; cursor: crosshair; }
+
+  #header {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 24px; height: 56px;
+    background: linear-gradient(180deg, rgba(10,12,15,0.97) 0%, rgba(10,12,15,0) 100%);
+    pointer-events: none;
+  }
+  #header h1 { font-size: 13px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent); }
+  #header .sub { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); letter-spacing: 0.1em; }
+
+  #coords-bar {
+    position: fixed; bottom: 24px; left: 24px; z-index: 10;
+    font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);
+    background: rgba(10,12,15,0.85); border: 1px solid var(--border);
+    padding: 6px 12px; border-radius: 4px; backdrop-filter: blur(8px); transition: color 0.2s;
+  }
+  #coords-bar.active { color: var(--accent2); }
+
+  #panel {
+    position: fixed; top: 0; right: 0; bottom: 0; z-index: 20;
+    width: var(--panel-w); background: var(--surface); border-left: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    transform: translateX(100%); transition: transform 0.4s cubic-bezier(0.16,1,0.3,1); will-change: transform;
+  }
+  #panel.open { transform: translateX(0); }
+
+  #panel-header {
+    padding: 20px 20px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  }
+  #panel-title { font-size: 11px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
+  #panel-coords { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted); }
+  #panel-count {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    background: var(--surface2); border: 1px solid var(--border);
+    padding: 3px 8px; border-radius: 3px; white-space: nowrap; flex-shrink: 0; color: var(--text);
+  }
+  #panel-count .n { color: var(--accent); font-weight: 700; }
+
+  #close-btn {
+    width: 28px; height: 28px; border-radius: 4px; border: 1px solid var(--border);
+    background: var(--surface2); cursor: pointer; color: var(--muted);
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s; flex-shrink: 0; margin-left: 8px;
+  }
+  #close-btn:hover { background: var(--border); color: var(--text); }
+
+  #progress-wrap { flex-shrink: 0; height: 3px; background: var(--surface2); }
+  #progress-bar { height: 100%; width: 0; background: var(--accent); transition: width 0.2s; }
+
+  #results { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  #results::-webkit-scrollbar { width: 4px; }
+  #results::-webkit-scrollbar-track { background: transparent; }
+  #results::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .state-msg {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    flex: 1; gap: 12px; color: var(--muted); text-align: center; padding: 40px;
+  }
+  .state-msg svg { opacity: 0.25; }
+  .state-msg p { font-size: 13px; line-height: 1.6; }
+  .spinner { width: 32px; height: 32px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .result-card {
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+    overflow: hidden; transition: border-color 0.2s;
+  }
+  .result-card:hover { border-color: rgba(255,255,255,0.15); }
+  .result-card.footprint-active { border-color: var(--accent2) !important; }
+  .result-card.expanded { border-color: var(--accent2); }
+
+  .card-header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; user-select: none; }
+  .card-index {
+    width: 22px; height: 22px; border-radius: 3px; background: var(--accent);
+    color: #0a0c0f; font-size: 10px; font-weight: 800; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .card-info { flex: 1; min-width: 0; }
+  .card-layer { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card-feat { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card-chevron { color: var(--muted); transition: transform 0.25s; flex-shrink: 0; }
+  .result-card.expanded .card-chevron { transform: rotate(180deg); }
+
+  .card-body { display: none; padding: 0 14px 14px; }
+  .result-card.expanded .card-body { display: block; }
+
+  .meta-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+  .meta-table tr { border-bottom: 1px solid var(--border); }
+  .meta-table tr:last-child { border-bottom: none; }
+  .meta-table td { padding: 5px 0; font-size: 11px; vertical-align: top; }
+  .meta-table td:first-child { color: var(--muted); font-family: 'JetBrains Mono', monospace; width: 38%; padding-right: 8px; }
+
+  .cog-error { font-size: 10px; color: var(--danger); font-family: 'JetBrains Mono', monospace; padding: 16px; text-align: center; }    border: 1px solid var(--border); border-radius: 4px; overflow: hidden;
+    margin-bottom: 12px; position: relative; background: var(--bg);
+    min-height: 120px; display: flex; align-items: center; justify-content: center;
+  }
+  .cog-error { font-size: 10px; color: var(--danger); font-family: 'JetBrains Mono', monospace; padding: 16px; text-align: center; }
+
+  .card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 6px 12px; border-radius: 4px; font-size: 11px; font-weight: 600;
+    cursor: pointer; text-decoration: none; transition: all 0.15s;
+    font-family: 'Syne', sans-serif; letter-spacing: 0.03em; border: none;
+  }
+  .btn-primary { background: var(--accent); color: #0a0c0f; }
+  .btn-primary:hover { filter: brightness(1.1); }
+  .btn-secondary { background: transparent; color: var(--accent2); border: 1px solid var(--accent2); }
+  .btn-secondary:hover { background: rgba(71,200,255,0.1); }
+  .btn-ghost { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
+  .btn-ghost:hover { color: var(--text); border-color: rgba(255,255,255,0.15); }
+
+  .click-marker { width: 14px; height: 14px; position: relative; }
+  .click-marker::before {
+    content: ''; position: absolute; inset: 0; border-radius: 50%;
+    background: var(--accent); animation: pulse-ring 1.5s ease-out infinite;
+  }
+  .click-marker::after { content: ''; position: absolute; inset: 3px; border-radius: 50%; background: var(--accent); }
+  @keyframes pulse-ring { 0% { transform: scale(1); opacity: 1; } 100% { transform: scale(3); opacity: 0; } }
+
+  #instructions {
+    position: fixed; bottom: 64px; left: 24px; z-index: 10;
+    background: rgba(10,12,15,0.85); border: 1px solid var(--border);
+    padding: 10px 14px; border-radius: 5px; backdrop-filter: blur(8px);
+    font-size: 11px; color: var(--muted); line-height: 1.7;
+    pointer-events: none; transition: opacity 0.4s;
+  }
+  #instructions.hidden { opacity: 0; }
+  #instructions span { color: var(--text); }
+
+  #config-btn {
+    position: fixed; top: 16px; right: 24px; z-index: 15;
+    width: 36px; height: 36px; border-radius: 5px;
+    background: rgba(10,12,15,0.85); border: 1px solid var(--border);
+    cursor: pointer; color: var(--muted); display: flex; align-items: center; justify-content: center;
+    backdrop-filter: blur(8px); transition: all 0.15s;
+  }
+  #config-btn:hover { color: var(--text); border-color: rgba(255,255,255,0.15); }
+
+  /* COG map overlay controls */
+  #cog-overlay-bar {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    z-index: 900; background: rgba(8,10,13,0.97);
+    border: 1px solid rgba(71,200,255,0.25); border-radius: 8px;
+    backdrop-filter: blur(12px);
+    display: none; flex-direction: column;
+    font-family: 'JetBrains Mono', monospace;
+    width: 540px; max-width: calc(100vw - 32px);
+    max-height: 220px;
+    box-shadow: 0 4px 32px rgba(0,0,0,0.6);
+  }
+  #cog-overlay-bar.visible { display: flex; }
+  #cog-bar-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 12px; border-bottom: 1px solid rgba(255,255,255,0.07);
+    font-size: 10px; flex-shrink: 0;
+  }
+  #cog-bar-header-title { color: var(--accent2); font-weight: 700; letter-spacing: .08em; flex: 1; }
+  #cog-bar-count { color: var(--muted); }
+  #cog-overlay-close {
+    background: transparent; border: none; color: var(--muted); cursor: pointer;
+    font: 10px 'JetBrains Mono', monospace; padding: 2px 6px; border-radius: 3px;
+    transition: color 0.15s;
+  }
+  #cog-overlay-close:hover { color: #ff6b47; }
+  #cog-bar-loading {
+    padding: 7px 12px; color: var(--accent2); font-size: 10px;
+    display: none; align-items: center; gap: 8px;
+  }
+  .cog-bar-spinner {
+    width: 11px; height: 11px; border: 2px solid rgba(71,200,255,0.25);
+    border-top-color: var(--accent2); border-radius: 50%;
+    animation: spin 0.7s linear infinite; flex-shrink: 0;
+  }
+  #cog-bar-list { overflow-y: auto; }
+  #cog-bar-list::-webkit-scrollbar { width: 3px; }
+  #cog-bar-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); }
+  .cog-bar-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 5px 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    font-size: 11px;
+  }
+  .cog-bar-row:last-child { border-bottom: none; }
+  .cog-bar-row-label {
+    flex: 1; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    min-width: 0;
+  }
+  .cog-bar-row-asset { color: var(--accent); font-size: 10px; flex-shrink: 0; }
+  .cog-bar-row-status { flex-shrink: 0; width: 14px; display: flex; align-items: center; justify-content: center; }
+  .cog-bar-row-status .row-spinner {
+    width: 10px; height: 10px; border: 1.5px solid rgba(71,200,255,0.2);
+    border-top-color: var(--accent2); border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  .cog-bar-row-status .row-tick { color: #3ecf6a; font-size: 12px; line-height: 1; }
+  .cog-bar-row-status .row-err  { color: #ff6b47; font-size: 12px; line-height: 1; }
+  .cog-bar-row-remove {
+    background: transparent; border: none; color: var(--muted); cursor: pointer;
+    font-size: 11px; padding: 2px 5px; border-radius: 3px;
+    transition: color 0.15s; flex-shrink: 0;
+  }
+  .cog-bar-row-remove:hover { color: #ff6b47; }
+
+  * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  /* ── Debug window ── */
+  #debug-win {
+    position:fixed; bottom:16px; right:16px; z-index:99999;
+    transition: right 0.4s cubic-bezier(0.16,1,0.3,1);
+    width:360px; max-width:calc(100vw - 32px);
+    background:rgba(8,10,13,0.97); border:1px solid rgba(255,80,60,0.5);
+    border-radius:6px; font-family:'JetBrains Mono',monospace; font-size:10px;
+    backdrop-filter:blur(8px); box-shadow:0 4px 24px rgba(255,60,40,0.15);
+  }
+  #debug-titlebar {
+    display:flex; align-items:center; gap:6px; padding:5px 8px;
+    border-bottom:1px solid rgba(255,80,60,0.2); cursor:default;
+    background:rgba(255,60,40,0.08); border-radius:6px 6px 0 0;
+  }
+  #debug-badge {
+    flex:1; font-size:9px; color:var(--muted);
+    background:rgba(255,255,255,0.08); border-radius:3px; padding:1px 5px;
+  }
+  #debug-clear, #debug-toggle {
+    background:transparent; border:none; color:var(--muted); cursor:pointer;
+    font:10px 'JetBrains Mono',monospace; padding:2px 5px; border-radius:3px;
+    transition:color 0.15s;
+  }
+  #debug-clear:hover, #debug-toggle:hover { color:var(--text); }
+  #debug-body {
+    max-height:200px; overflow-y:auto; padding:4px 0;
+  }
+  #debug-body::-webkit-scrollbar { width:3px; }
+  #debug-body::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); }
+  .debug-row { padding:2px 8px; line-height:1.5; display:flex; gap:6px; word-break:break-all; }
+  .debug-ts { color:rgba(255,255,255,0.2); flex-shrink:0; }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="header">
+  <div>
+    <h1><span style="color:#ffffff;text-transform:none;letter-spacing:0.05em;font-weight:700">mutant.kiwi</span> Aerial Imagery Explorer</h1>
+    <div class="sub">Click anywhere on the map to query intersecting imagery</div>
+  </div>
+</div>
+
+<div id="coords-bar">— , —</div>
+
+<div id="instructions">
+  <span>Click</span> anywhere on the map to find imagery<br>
+  <span>650 layers</span> will be queried in parallel
+</div>
+
+<button id="config-btn" title="Layer configuration">
+  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+</button>
+
+<div id="cog-overlay-bar">
+  <div id="cog-bar-header">
+    <span id="cog-bar-header-title">SHEETS ON MAP</span>
+    <span id="cog-bar-count"></span>
+    <button id="cog-overlay-close">✕ clear all</button>
+  </div>
+  <div id="cog-bar-loading">
+    <div class="cog-bar-spinner"></div>
+    <span id="cog-bar-label">Loading…</span>
+  </div>
+  <div id="cog-bar-list"></div>
+</div>
+
+<div id="panel">
+  <div id="panel-header">
+    <div style="flex:1;min-width:0">
+      <div id="panel-title">Imagery Results</div>
+      <div id="panel-coords">—</div>
+    </div>
+    <div id="panel-count"><span class="n" id="count-n">0</span> found</div>
+    <button id="close-btn" title="Close panel">
+      <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+  <div id="progress-wrap"><div id="progress-bar"></div></div>
+  <div id="results"></div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════
+// SENTRY ERROR TRACKING
+document.addEventListener('DOMContentLoaded', () => {
+  debugInfo('GeoTIFF Pool ready — WEBP/LZW/Deflate/JPEG native; LERC+ZSTD via fallback');
+  window._lercReady
+    .then(() => debugInfo('@esri/lerc ready ✓'))
+    .catch(err => debugInfo('@esri/lerc unavailable (' + err.message + ')'));
+  window._zstdReady
+    .then(() => debugInfo('Zstd ready ✓ (ZstdCodec or fzstd)'))
+    .catch(err => debugInfo('Zstd unavailable (' + err.message + ')'));
+});
+// ═══════════════════════════════════════════════════════════════════
+if (typeof Sentry !== 'undefined') {
+  Sentry.init({
+    dsn: "https://0947976df5d6405b80cf080d0ea4971a@mutantkiwi.bugsink.com/1",
+    tracesSampleRate: 0.2,
+    beforeSend(event) {
+      // Suppress noisy MapLibre sprite warnings
+      const msg = event.message || '';
+      if (msg.includes('could not be loaded') || msg.includes('styleimagemissing')) return null;
+      return event;
+    }
+  });
+}
+// ═══════════════════════════════════════════════════════════════════
+// CONFIGURATION
+// ═══════════════════════════════════════════════════════════════════
+
+// FGB files are in EPSG:2193 (NZTM2000, metres). Clicks are WGS84.
+proj4.defs('EPSG:2193',
+  '+proj=tmerc +lat_0=0 +lon_0=173 +k=0.9996 +x_0=1600000 +y_0=10000000 ' +
+  '+ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs');
+const toNZTM  = (lng, lat) => proj4('EPSG:4326', 'EPSG:2193', [lng, lat]);
+const toWGS84 = (e, n)     => proj4('EPSG:2193', 'EPSG:4326', [e, n]);
+
+// FIX 1: correct base URL for all .fgb files
+const BASE_URL = 'https://s3.dualstack.ap-southeast-2.amazonaws.com/gbf.nz.imagery/layers/';
+
+const CONFIG = {
+  layers: [
+    {"url": BASE_URL + "northland_auckland_sn8104_1982_1983_0_4m.fgb",  "label": "Northland / Auckland 0.4m SN8104 (1982-1983)",        "imageUrlField": "asset_url_image"},
+    {"url": BASE_URL + "northland_auckland_sn9482_1995_1996_0_8m.fgb",  "label": "Northland / Auckland 0.8m SN9482 (1995-1996)",        "imageUrlField": "asset_url_image"},
+    {"url": BASE_URL + "northland_2014_2015_0_1m.fgb",                  "label": "Northland 0.1m Urban Aerial Photos (2014-2015)",      "imageUrlField": "asset_url_image"},
+    {"url": BASE_URL + "northland_2016_0_1m.fgb",                       "label": "Northland 0.1m Urban Aerial Photos (2016)",           "imageUrlField": "asset_url_image"},
+    {"url": BASE_URL + "northland_sn5932_1981_1982_0_375m.fgb",         "label": "Northland 0.375m SN5932 (1981-1982)",                 "imageUrlField": "asset_url_image"},
+    {"url": BASE_URL + "northland_snc5797_1980_0_375m.fgb",             "label": "Northland 0.375m SNC5797 (1980)",                     "imageUrlField": "asset_url_image"},
+    {"url": BASE_URL + "northland_2023_2024_0_3m.fgb",                  "label": "Northland 0.3m Rural Aerial Photos (2023-2025)",      "imageUrlField": "asset_url_image"},
+    {"url": BASE_URL + "northland_snc8573_1985_0_3m.fgb",               "label": "Northland 0.3m SNC8573 (1985)",                       "imageUrlField": "asset_url_image"},
+    {"url": BASE_URL + "northland_2014_2016_0_4m.fgb",                  "label": "Northland 0.4m Rural Aerial Photos (2014-2016)",      "imageUrlField": "asset_url_image"},
+    {"url": BASE_URL + "northland_snc12835_2005_0_64m.fgb",             "label": "Northland 0.64m SNC12835 (2005)",                     "imageUrlField": "asset_url_image"},
+    {"url": BASE_URL + "northland_sn9281_1993_0_6m.fgb",                "label": "Northland 0.6m SN9281 (1993)",                        "imageUrlField": "asset_url_image"},
+    {"url": BASE_URL + "northland_2003_0_75m.fgb",                      "label": "Northland 0.75m Rural Aerial Photos (2003)",          "imageUrlField": "asset_url_image"},
+    {"url": BASE_URL + "northland_snc9935_2000_2003_0_75m.fgb",         "label": "Northland 0.75m SNC9935 (2000-2003)",                 "imageUrlField": "asset_url_image"},
+    {"url": BASE_URL + "northland_2004_0_78m.fgb",                      "label": "Northland 0.78m Rural Aerial Photos (2004)",          "imageUrlField": "asset_url_image"},
+    {"url": BASE_URL + "northland_sn5780_1980_0_8m.fgb",                "label": "Northland 0.8m SN5780 (1980)",                        "imageUrlField": "asset_url_image"},
+    {"url": BASE_URL + "northland_sn8328_1984_1986_0_8m.fgb",           "label": "Northland 0.8m SN8328 (1984-1986)",                   "imageUrlField": "asset_url_image"},
+    {"url": BASE_URL + "northland_2003_1m.fgb",                         "label": "Northland 1m Rural Aerial Photos (2003)",             "imageUrlField": "asset_url_image"},
+    {"url": BASE_URL + "northland_2006_1m.fgb",                         "label": "Northland 1m Rural Aerial Photos (2006)",             "imageUrlField": "asset_url_image"}
+  ],
+
+  concurrency: 20,
+  mapStyle: 'https://tiles.openfreemap.org/styles/dark',
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// MAP INIT
+// ═══════════════════════════════════════════════════════════════════
+const map = new maplibregl.Map({
+  container: 'map',
+  style: CONFIG.mapStyle,
+  center: [174.0, -36.5], // New Zealand (Northland area)
+  zoom: 7,
+  attributionControl: false,
+});
+
+map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-left');
+map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
+
+map.on('mousemove', e => {
+  document.getElementById('coords-bar').textContent =
+    `${e.lngLat.lat.toFixed(6)}, ${e.lngLat.lng.toFixed(6)}`;
+});
+
+let clickMarker = null;
+function placeMarker(lngLat) {
+  if (clickMarker) clickMarker.remove();
+  const el = document.createElement('div');
+  el.className = 'click-marker';
+  clickMarker = new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat(lngLat).addTo(map);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PANEL STATE
+// ═══════════════════════════════════════════════════════════════════
+const panel      = document.getElementById('panel');
+const resultsEl  = document.getElementById('results');
+let _pinnedLayerUrl = null; // layer URL whose card should stay expanded
+const countEl    = document.getElementById('count-n');
+const progressEl = document.getElementById('progress-bar');
+const panelCoord = document.getElementById('panel-coords');
+
+let currentQuery = null;
+
+function _shiftDebug(panelOpen) {
+  const dbg = document.getElementById('debug-win');
+  if (!dbg) return;
+  dbg.style.right = panelOpen ? 'calc(var(--panel-w) + 16px)' : '16px';
+}
+
+function openPanel()  {
+  panel.classList.add('open');
+  _shiftDebug(true);
+}
+function closePanel() {
+  panel.classList.remove('open');
+  _shiftDebug(false);
+}
+
+document.getElementById('close-btn').onclick = () => {
+  closePanel();
+  clearFootprint();
+  _pinnedLayerUrl = null;
+  if (clickMarker) clickMarker.remove();
+  clickMarker = null;
+  if (currentQuery) currentQuery.cancelled = true;
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// QUERY ENGINE
+// ═══════════════════════════════════════════════════════════════════
+
+async function queryFlatGeobuf(layerDef, lngWGS, latWGS, token) {
+  if (token.cancelled) return [];
+
+  // Convert WGS84 click to NZTM2000 metres (EPSG:2193)
+  const [e, n] = toNZTM(lngWGS, latWGS);
+  const d = 5000; // 5 km buffer in metres
+  const rect = { minX: e - d, minY: n - d, maxX: e + d, maxY: n + d };
+
+  try {
+    const results = [];
+    let featureCount = 0;
+    // flatgeobuf.deserialize(url, rect) uses HTTP range requests efficiently
+    for await (const feature of flatgeobuf.deserialize(layerDef.url, rect)) {
+      featureCount++;
+      if (token.cancelled) break;
+      // Point-in-polygon in NZTM2000 space (same CRS as the FGB data)
+      if (pointInFeature(e, n, feature)) {
+        feature._layer = layerDef;
+        // Reproject geometry to WGS84 for map zoom
+        feature.geometry = reprojectGeom(feature.geometry);
+        results.push(feature);
+      }
+    }
+    if (featureCount > 0 && results.length === 0) {
+      debugLog(`${featureCount} bbox, 0 pip — ${layerDef.label.slice(0,40)}`);
+    }
+    return results;
+  } catch (err) {
+    debugLog(`ERR: ${err.message.slice(0,70)} — ${layerDef.label.slice(0,25)}`);
+    return [];
+  }
+}
+
+function reprojectGeom(geom) {
+  if (!geom) return geom;
+  const rr = ring => ring.map(([x, y]) => toWGS84(x, y));
+  if (geom.type === 'Polygon')      return { ...geom, coordinates: geom.coordinates.map(rr) };
+  if (geom.type === 'MultiPolygon') return { ...geom, coordinates: geom.coordinates.map(p => p.map(rr)) };
+  return geom;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DEBUG WINDOW
+// ═══════════════════════════════════════════════════════════════════
+const _debugEntries = []; // { ts, level, msg }
+let _debugVisible = true;
+
+function _buildDebugUI() {
+  const el = document.createElement('div');
+  el.id = 'debug-win';
+  el.innerHTML = `
+    <div id="debug-titlebar">
+      <span style="color:#ff4f3b;font-weight:700;letter-spacing:.1em">DEBUG</span>
+      <span id="debug-badge">0</span>
+      <button id="debug-clear" title="Clear">✕ clear</button>
+      <button id="debug-toggle" title="Minimise">▾</button>
+    </div>
+    <div id="debug-body"></div>`;
+  document.body.appendChild(el);
+  document.getElementById('debug-clear').onclick  = () => { _debugEntries.length = 0; _renderDebug(); };
+  document.getElementById('debug-toggle').onclick = () => {
+    _debugVisible = !_debugVisible;
+    document.getElementById('debug-body').style.display = _debugVisible ? 'block' : 'none';
+    document.getElementById('debug-toggle').textContent = _debugVisible ? '▾' : '▸';
+  };
+}
+
+function _renderDebug() {
+  const body  = document.getElementById('debug-body');
+  const badge = document.getElementById('debug-badge');
+  if (!body) return;
+  const errors = _debugEntries.filter(e => e.level === 'error').length;
+  badge.textContent = _debugEntries.length + (errors ? ' · ' + errors + ' err' : '');
+  badge.style.background = errors ? 'rgba(255,107,71,0.3)' : 'rgba(255,255,255,0.08)';
+  body.innerHTML = _debugEntries.slice(0, 60).map(e => {
+    const col = e.level === 'error' ? '#ff6b47' : e.level === 'warn' ? '#e8ff47' : '#a0aec0';
+    return `<div class="debug-row" style="color:${col}"><span class="debug-ts">${e.ts}</span><span>${escHtml(e.msg)}</span></div>`;
+  }).join('');
+}
+
+function debugLog(msg, level) {
+  const lvl = level || (msg.startsWith('ERR') || msg.startsWith('\u26a0') ? 'error' : 'warn');
+  const ts  = new Date().toTimeString().slice(0,8);
+  console[lvl === 'error' ? 'error' : 'warn']('[DBG]', msg);
+  _debugEntries.unshift({ ts, level: lvl, msg });
+  if (_debugEntries.length > 200) _debugEntries.pop();
+  // Forward errors to Sentry
+  if (lvl === 'error' && typeof Sentry !== 'undefined') {
+    Sentry.captureMessage(msg, 'error');
+  }
+  // Re-show debug window on new log entry
+  const dbg = document.getElementById('debug-win');
+  if (dbg) {
+    dbg.style.display = 'block';
+    _debugVisible = true;
+    const body = document.getElementById('debug-body');
+    if (body) body.style.display = 'block';
+    const tog = document.getElementById('debug-toggle');
+    if (tog) tog.textContent = '▾';
+  }
+  _renderDebug();
+}
+
+function debugInfo(msg) { debugLog(msg, 'info'); }
+function debugErr(msg)  { debugLog(msg, 'error'); }
+
+// Intercept console.error/warn globally — guard against re-entrancy
+let _dbgInProgress = false;
+const _origError = console.error.bind(console);
+const _origWarn  = console.warn.bind(console);
+console.error = (...args) => {
+  _origError(...args);
+  if (_dbgInProgress) return;
+  _dbgInProgress = true;
+  try { debugLog(args.map(a => (a instanceof Error ? a.message : String(a))).join(' '), 'error'); }
+  finally { _dbgInProgress = false; }
+};
+console.warn = (...args) => {
+  _origWarn(...args);
+  if (_dbgInProgress || args[0] === '[DBG]') return;
+  const msg = args[0];
+  if (typeof msg === 'string' && (msg.includes('could not be loaded') || msg.includes('styleimagemissing') || msg.includes('addImage'))) return;
+  _dbgInProgress = true;
+  try { debugLog(args.map(a => (a instanceof Error ? a.message : String(a))).join(' '), 'warn'); }
+  finally { _dbgInProgress = false; }
+};
+
+document.addEventListener('DOMContentLoaded', _buildDebugUI);
+
+function pointInFeature(lng, lat, feature) {
+  const geom = feature.geometry;
+  if (!geom) return false;
+  const polys = geom.type === 'Polygon'      ? [geom.coordinates]
+              : geom.type === 'MultiPolygon' ? geom.coordinates
+              : [];
+  return polys.some(poly => pointInPolygon(lng, lat, poly[0]));
+}
+
+function pointInPolygon(x, y, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// MAIN CLICK HANDLER
+// ═══════════════════════════════════════════════════════════════════
+map.on('click', async e => {
+  // Ignore clicks on extents layers — those have their own handler
+  const extentsFillIds = [..._extentsLayers.values()].map(v => v.fillId);
+  const hitExtents = extentsFillIds.length && map.queryRenderedFeatures(e.point, { layers: extentsFillIds }).length > 0;
+  if (hitExtents) return;
+
+  const { lng, lat } = e.lngLat;
+  placeMarker(e.lngLat);
+
+  const coordEl = document.getElementById('coords-bar');
+  coordEl.classList.add('active');
+  setTimeout(() => coordEl.classList.remove('active'), 800);
+
+  if (currentQuery) currentQuery.cancelled = true;
+  clearFootprint();
+  const token = { cancelled: false };
+  currentQuery = token;
+
+  document.getElementById('instructions').classList.add('hidden');
+  panelCoord.textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+  countEl.textContent = '…';
+  resultsEl.innerHTML = '';
+  openPanel();
+
+  resultsEl.innerHTML = `
+    <div class="state-msg">
+      <div class="spinner"></div>
+      <p>Querying <strong>${CONFIG.layers.length}</strong> layers…</p>
+    </div>`;
+  progressEl.style.width = '0%';
+
+  const layers = CONFIG.layers;
+  let completed = 0;
+  let found = 0;
+  window._lastResults = [];
+
+  const batchSize = CONFIG.concurrency;
+  for (let i = 0; i < layers.length; i += batchSize) {
+    if (token.cancelled) return;
+    const batch = layers.slice(i, i + batchSize);
+    const batchResults = await Promise.all(
+      batch.map(layer => queryFlatGeobuf(layer, lng, lat, token))
+    );
+    for (const features of batchResults) {
+      for (const f of features) {
+        window._lastResults.push(f);
+        found++;
+        appendCard(f, found);
+      }
+    }
+    completed += batch.length;
+    progressEl.style.width = Math.round(completed / layers.length * 100) + '%';
+    countEl.textContent = found;
+    if (found === 0) {
+      const msg = resultsEl.querySelector('.state-msg p');
+      if (msg) msg.innerHTML = `Querying <strong>${CONFIG.layers.length}</strong> layers…<br>
+        <span style="color:var(--muted);font-size:10px">${completed} done</span>`;
+    }
+  }
+
+  progressEl.style.width = '100%';
+  setTimeout(() => { progressEl.style.width = '0'; }, 600);
+
+  if (found === 0 && !token.cancelled) {
+    resultsEl.innerHTML = `
+      <div class="state-msg">
+        <svg width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+        </svg>
+        <p>No imagery found at this location.<br>Try clicking within a surveyed area.</p>
+      </div>`;
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// CARD RENDERING
+// ═══════════════════════════════════════════════════════════════════
+function appendCard(feature, index) {
+  const layer   = feature._layer;
+  const props   = feature.properties || {};
+  const imageUrl = props[layer.imageUrlField] || props['image_url'] || props['url'] || props['href'] || '';
+
+  const SHOW_KEYS = ['title', 'title_unicode', 'region', 'asset_id'];
+  const metaKeys = SHOW_KEYS.filter(k => props[k] !== undefined && props[k] !== null);
+
+  const existingMsg = resultsEl.querySelector('.state-msg');
+  if (existingMsg) existingMsg.remove();
+
+  const card = document.createElement('div');
+  card.className = 'result-card';
+  card.dataset.index = index;
+  card.dataset.layerUrl = layer.url;
+  if (layer.url === _pinnedLayerUrl) card.classList.add('expanded');
+
+  const featName = props.name || props.id || props.fid || props.feature_id || `Feature ${index}`;
+
+  card.innerHTML = `
+    <div class="card-header">
+      <div class="card-index">${index}</div>
+      <div class="card-info">
+        <div class="card-layer">${escHtml(layer.label)}</div>
+        <div class="card-feat">${escHtml(String(featName))}</div>
+      </div>
+      <svg class="card-chevron" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+    </div>
+    <div class="card-body">
+      ${metaKeys.length ? `
+        <table class="meta-table">
+          ${metaKeys.map(k => `<tr><td>${escHtml(k)}</td><td>${escHtml(String(props[k]))}</td></tr>`).join('')}
+        </table>` : ''}
+      <div class="card-actions">
+        ${imageUrl ? `
+        <button class="btn btn-secondary" style="border-color:var(--accent);color:var(--accent)" data-cog-url data-cog-label>
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+          Open on Map
+        </button>
+        <button class="btn btn-secondary" onclick="copyToClipboard('${escHtml(imageUrl)}', this)">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          Copy URL
+        </button>` : ''}
+        <button class="btn btn-ghost" data-extents-btn>
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="3,9 3,3 9,3"/><polyline points="21,9 21,3 15,3"/><polyline points="3,15 3,21 9,21"/><polyline points="21,15 21,21 15,21"/></svg>
+          Show Extents
+        </button>
+      </div>
+    </div>`;
+
+  card.querySelector('.card-header').addEventListener('click', () => {
+    const wasOpen = card.classList.contains('expanded');
+    // Collapse all cards first
+    resultsEl.querySelectorAll('.result-card.expanded').forEach(c => c.classList.remove('expanded'));
+    if (!wasOpen) {
+      card.classList.add('expanded');
+    }
+    showFootprint(feature, true);
+  });
+
+  card.addEventListener('mouseenter', () => showFootprint(feature, false));
+  card.addEventListener('mouseleave', () => { if (!card.classList.contains('footprint-active')) clearFootprintIfHover(); });
+
+  // Wire Open on Map button via data attributes (avoids inline JSON quoting issues)
+  const cogBtn = card.querySelector('[data-cog-url]');
+  if (cogBtn && imageUrl) {
+    cogBtn.dataset.cogUrl     = imageUrl;
+    cogBtn.dataset.cogLabel   = layer.label;
+    cogBtn.dataset.cogAssetId = props.asset_id || props.assest_id || _assetIdFromUrl(imageUrl);
+    debugInfo('Card props keys: ' + Object.keys(props).join(', '));
+    cogBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      loadCogOnMap(cogBtn.dataset.cogUrl, cogBtn.dataset.cogLabel, cogBtn.dataset.cogAssetId);
+    });
+  }
+
+  // Wire Show Extents button
+  const extBtn = card.querySelector('[data-extents-btn]');
+  if (extBtn) {
+    extBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      toggleLayerExtents(layer, extBtn);
+    });
+  }
+
+  resultsEl.appendChild(card);
+}
+
+
+function toRGBA(bands, w, h) {
+  const n = w * h;
+  const out = new Uint8ClampedArray(n * 4);
+  for (let i = 0; i < n; i++) {
+    if (bands.length === 1) {
+      const v = bands[0][i];
+      out[i*4] = v; out[i*4+1] = v; out[i*4+2] = v; out[i*4+3] = 255;
+    } else {
+      out[i*4]   = normalise(bands[0][i]);
+      out[i*4+1] = normalise(bands[1] ? bands[1][i] : 0);
+      out[i*4+2] = normalise(bands[2] ? bands[2][i] : 0);
+      out[i*4+3] = bands[3] ? bands[3][i] : 255;
+    }
+  }
+  return out;
+}
+function normalise(v) { return v > 255 ? Math.round(v / 256) : v; }
+
+// ═══════════════════════════════════════════════════════════════════
+// FOOTPRINT OVERLAY — shows polygon bounds on hover/click
+// ═══════════════════════════════════════════════════════════════════
+const FP_SOURCE = 'footprint-source';
+const FP_FILL   = 'footprint-fill';
+const FP_LINE   = 'footprint-line';
+let _fpPinned = false;
+
+map.on('load', () => {
+  map.addSource(FP_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addLayer({ id: FP_FILL, type: 'fill', source: FP_SOURCE,
+    paint: { 'fill-color': '#47c8ff', 'fill-opacity': 0.1 } });
+  map.addLayer({ id: FP_LINE, type: 'line', source: FP_SOURCE,
+    paint: { 'line-color': '#47c8ff', 'line-width': 2, 'line-opacity': 0.9 } });
+});
+
+function showFootprint(feature, pin) {
+  if (!feature || !feature.geometry) return;
+  if (pin) {
+    _fpPinned = true;
+    document.querySelectorAll('.result-card.footprint-active').forEach(el => el.classList.remove('footprint-active'));
+  }
+  const src = map.getSource(FP_SOURCE);
+  if (src) src.setData({ type: 'FeatureCollection',
+    features: [{ type: 'Feature', geometry: feature.geometry, properties: {} }] });
+}
+
+function clearFootprintIfHover() {
+  if (_fpPinned) return;
+  const src = map.getSource(FP_SOURCE);
+  if (src) src.setData({ type: 'FeatureCollection', features: [] });
+}
+
+function clearFootprint() {
+  _fpPinned = false;
+  document.querySelectorAll('.result-card.footprint-active').forEach(el => el.classList.remove('footprint-active'));
+  const src = map.getSource(FP_SOURCE);
+  if (src) src.setData({ type: 'FeatureCollection', features: [] });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// UTILITIES
+// ═══════════════════════════════════════════════════════════════════
+
+async function copyToClipboard(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+    const orig = btn.innerHTML;
+    btn.innerHTML = '✓ Copied!';
+    btn.style.color = 'var(--accent)';
+    setTimeout(() => { btn.innerHTML = orig; btn.style.color = ''; }, 1500);
+  } catch {}
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+document.getElementById('config-btn').onclick = () => {};
+
+
+// ═══════════════════════════════════════════════════════════════════
+// LAYER EXTENTS OVERLAY
+// Streams the full FGB file and shows all footprints on the map.
+// Each layer gets its own source/layer; toggling removes it.
+// ═══════════════════════════════════════════════════════════════════
+const _extentsLayers = new Map(); // layerUrl -> { sourceId, fillId, lineId }
+
+function _setExtentsBtn(btn, state) {
+  btn.disabled = false;
+  btn.style.borderColor = '';
+  btn.style.color = '';
+  const svgBox = '<svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="3,9 3,3 9,3"/><polyline points="21,9 21,3 15,3"/><polyline points="3,15 3,21 9,21"/><polyline points="21,15 21,21 15,21"/></svg>';
+  if (state === 'loading') {
+    btn.innerHTML = '<svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg> Loading…';
+    btn.style.borderColor = 'var(--accent2)'; btn.style.color = 'var(--accent2)';
+    btn.disabled = true;
+  } else if (state === 'hide') {
+    btn.innerHTML = svgBox + ' Hide Extents';
+    btn.style.borderColor = '#e8ff47'; btn.style.color = '#e8ff47';
+  } else if (state === 'failed') {
+    btn.innerHTML = '⚠ Failed';
+  } else {
+    btn.innerHTML = svgBox + ' Show Extents';
+  }
+}
+
+function _removeExtentsEntry(key, btn) {
+  const entry = _extentsLayers.get(key);
+  if (!entry) return;
+  const { sourceId, fillId, lineId, clickHandler, onEnter, onLeave } = entry;
+  if (clickHandler) map.off('click',      fillId, clickHandler);
+  if (onEnter)      map.off('mouseenter', fillId, onEnter);
+  if (onLeave)      map.off('mouseleave', fillId, onLeave);
+  try { if (map.getLayer(lineId))    map.removeLayer(lineId);    } catch(e) {}
+  try { if (map.getLayer(fillId))    map.removeLayer(fillId);    } catch(e) {}
+  try { if (map.getSource(sourceId)) map.removeSource(sourceId); } catch(e) {}
+  map.getCanvas().style.cursor = '';
+  _extentsLayers.delete(key);
+  if (btn) _setExtentsBtn(btn, 'show');
+}
+
+async function toggleLayerExtents(layerDef, btn) {
+  const key = layerDef.url;
+
+  // Already shown - remove
+  if (_extentsLayers.has(key)) {
+    _removeExtentsEntry(key, btn);
+    _pinnedLayerUrl = null;
+    return;
+  }
+
+  // Pin this layer's card open — persists across query rebuilds
+  _pinnedLayerUrl = key;
+  const parentCard = btn.closest('.result-card');
+  if (parentCard) {
+    resultsEl.querySelectorAll('.result-card.expanded').forEach(c => c.classList.remove('expanded'));
+    parentCard.classList.add('expanded');
+  }
+
+  _setExtentsBtn(btn, 'loading');
+
+  // Use a world-covering rect so HTTP range requests still work with flatgeobuf 3.35
+  const worldRect = { minX: -1e9, minY: -1e9, maxX: 1e9, maxY: 1e9 };
+  const features = [];
+  try {
+    debugInfo('Extents: streaming ' + layerDef.label.slice(0, 50));
+    for await (const f of flatgeobuf.deserialize(layerDef.url, worldRect)) {
+      const geom = reprojectGeom(f.geometry);
+      if (geom) features.push({ type: 'Feature', geometry: geom, properties: f.properties || {} });
+    }
+    debugInfo('Extents OK: ' + features.length + ' features');
+  } catch(err) {
+    debugErr('Extents stream: ' + err.message);
+    _setExtentsBtn(btn, 'failed');
+    return;
+  }
+
+  if (!features.length) {
+    debugErr('Extents: 0 features returned');
+    _setExtentsBtn(btn, 'failed');
+    return;
+  }
+
+  const base     = 'ext-' + key.split('/').pop().replace(/\W/g, '_').slice(0, 40);
+  const sourceId = base + '-src';
+  const fillId   = base + '-fill';
+  const lineId   = base + '-line';
+
+  try {
+    map.addSource(sourceId, { type: 'geojson', data: { type: 'FeatureCollection', features } });
+    map.addLayer({ id: fillId, type: 'fill', source: sourceId,
+      paint: { 'fill-color': '#e8ff47', 'fill-opacity': 0.04 } });
+    map.addLayer({ id: lineId, type: 'line', source: sourceId,
+      paint: { 'line-color': '#e8ff47', 'line-width': 1, 'line-opacity': 0.7 } });
+  } catch(err) {
+    debugErr('Extents map add: ' + err.message);
+    _setExtentsBtn(btn, 'failed');
+    return;
+  }
+
+  // Store entry first so clickHandler closure can reference it safely
+  const entry = { sourceId, fillId, lineId, clickHandler: null, onEnter: null, onLeave: null };
+  _extentsLayers.set(key, entry);
+  _setExtentsBtn(btn, 'hide');
+
+  // Click polygon -> open COG on map, remove extents layer
+  entry.clickHandler = (e) => {
+    e.preventDefault();
+    e.originalEvent && e.originalEvent.stopPropagation();
+    const feat = e.features && e.features[0];
+    if (!feat) return;
+    const cogUrl = feat.properties[layerDef.imageUrlField]
+                || feat.properties['image_url']
+                || feat.properties['url']
+                || feat.properties['href'];
+    if (!cogUrl) { debugErr('No COG URL on clicked feature'); return; }
+    const assetId = feat.properties['asset_id'] || feat.properties['assest_id'] || feat.properties['ASSET_ID'] || _assetIdFromUrl(cogUrl);
+    debugInfo('asset_id=' + assetId + ' props=' + Object.keys(feat.properties || {}).join(','));
+    loadCogOnMap(cogUrl, layerDef.label, assetId);
+  };
+  entry.onEnter = () => { map.getCanvas().style.cursor = 'pointer'; };
+  entry.onLeave = () => { map.getCanvas().style.cursor = ''; };
+
+  map.on('click',      fillId, entry.clickHandler);
+  map.on('mouseenter', fillId, entry.onEnter);
+  map.on('mouseleave', fillId, entry.onLeave);
+}
+
+
+// COG MAP OVERLAY
+// MULTI-COG MAP OVERLAY
+// Each loaded COG gets its own source/layer keyed by URL.
+// renderAllCogs() re-renders every active COG on moveend.
+// ═══════════════════════════════════════════════════════════════════
+// GeoTIFF decoder pool — required for WEBP-compressed COG tiles
+const cogPool = new GeoTIFF.Pool();
+const _cogMap  = new Map(); // url -> { tiff, image, minE,minN,maxE,maxN, label, sourceId, layerId, token }
+
+function _assetIdFromUrl(url) {
+  return (url || '').split('/').pop().replace(/\.[^.]+$/, '');
+}
+
+function _cogIds(url) {
+  const slug = url.split('/').pop().replace(/\W/g,'_').slice(0,40);
+  return { sourceId: 'cog-' + slug + '-src', layerId: 'cog-' + slug + '-lyr' };
+}
+
+function removeCogOverlay(url) {
+  if (url) {
+    const entry = _cogMap.get(url);
+    if (!entry) return;
+    entry.token = -1;
+    try { if (map.getLayer(entry.layerId))   map.removeLayer(entry.layerId);   } catch(e) {}
+    try { if (map.getSource(entry.sourceId)) map.removeSource(entry.sourceId); } catch(e) {}
+    _cogMap.delete(url);
+  } else {
+    // Remove all
+    _cogMap.forEach((entry, u) => removeCogOverlay(u));
+  }
+  _updateCogBar();
+}
+
+function _updateCogBar() {
+  const bar     = document.getElementById('cog-overlay-bar');
+  const list    = document.getElementById('cog-bar-list');
+  const count   = document.getElementById('cog-bar-count');
+
+  if (_cogMap.size === 0) {
+    bar.classList.remove('visible');
+    return;
+  }
+
+  bar.classList.add('visible');
+  count.textContent = _cogMap.size + ' sheet' + (_cogMap.size !== 1 ? 's' : '');
+
+  list.innerHTML = [..._cogMap.entries()].map(([url, e]) => {
+    const statusHtml = e.status === 'done'  ? '<span class="row-tick">✓</span>'
+                     : e.status === 'error' ? '<span class="row-err">!</span>'
+                     : '<div class="row-spinner"></div>';
+    return `
+    <div class="cog-bar-row">
+      <span class="cog-bar-row-status">${statusHtml}</span>
+      <span class="cog-bar-row-label" title="${escHtml(e.label)}">${escHtml(e.label)}</span>
+      <span class="cog-bar-row-asset">${escHtml(e.assetId || '—')}</span>
+      <button class="cog-bar-row-remove" data-remove-url="${escHtml(url)}">✕</button>
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('[data-remove-url]').forEach(btn => {
+    btn.addEventListener('click', () => removeCogOverlay(btn.dataset.removeUrl));
+  });
+}
+
+async function loadCogOnMap(url, label, assetId) {
+  // If already loaded, just re-render (no duplicate)
+  if (_cogMap.has(url)) {
+    debugInfo('COG already on map: ' + url.split('/').pop());
+    renderOneCog(_cogMap.get(url));
+    return;
+  }
+
+  const barLabel = document.getElementById('cog-bar-label');
+  const loading  = document.getElementById('cog-bar-loading');
+  document.getElementById('cog-overlay-bar').classList.add('visible');
+  loading.style.display = 'flex';
+  barLabel.textContent = 'Loading ' + label + '…';
+
+  try {
+    const tiff  = await GeoTIFF.fromUrl(url, { allowFullFile: true });
+    tiff._sourceUrl = url; // needed for LERC tile-fetch fallback
+    const image = await tiff.getImage();
+    const [minE, minN, maxE, maxN] = image.getBoundingBox();
+    const [swLng, swLat] = toWGS84(minE, minN);
+    const [nwLng, nwLat] = toWGS84(minE, maxN);
+    const [neLng, neLat] = toWGS84(maxE, maxN);
+    const [seLng, seLat] = toWGS84(maxE, minN);
+    const { sourceId, layerId } = _cogIds(url);
+
+    const entry = { tiff, image, minE, minN, maxE, maxN, label, url,
+                    assetId: assetId || _assetIdFromUrl(url),
+                    sourceId, layerId, token: 0, status: 'rendering',
+                    nwLng, nwLat, neLng, neLat, seLng, seLat, swLng, swLat };
+    _cogMap.set(url, entry);
+    loading.style.display = 'none';
+    _updateCogBar();
+
+    // Zoom to this COG's extents
+    map.fitBounds(
+      [[Math.min(swLng, nwLng), Math.min(swLat, seLat)],
+       [Math.max(neLng, seLng), Math.max(nwLat, neLat)]],
+      { padding: 60, duration: 800 }
+    );
+
+    renderOneCog(entry);
+
+  } catch (err) {
+    loading.style.display = 'none';
+    barLabel.textContent = '⚠ Failed: ' + err.message.slice(0, 80);
+    loading.style.display = 'flex';
+    console.error('COG load error:', err);
+  }
+}
+
+
+
+async function readRastersWithFallback(tiff, image, opts) {
+  // Primary path: geotiff.js + Pool handles WEBP, LZW, Deflate, JPEG natively
+  try {
+    return await image.readRasters(opts);
+  } catch (err) {
+    const compression = image.fileDirectory && image.fileDirectory.Compression;
+    if (compression === 50000 || compression === 50001) {
+      debugInfo('LERC compression (' + compression + ') — trying tile fallback…');
+      return await readRastersLerc(tiff, image, opts);
+    }
+    if (compression === 50003) {
+      debugInfo('ZSTD compression — trying tile fallback…');
+      return await readRastersZstd(tiff, image, opts);
+    }
+    debugErr('readRasters failed (compression=' + compression + '): ' + err.message.slice(0, 80));
+    throw err;
+  }
+}
+
+// LERC tile-by-tile fallback — fetches raw tiles via Range requests and decodes with @esri/lerc
+async function readRastersLerc(tiff, image, opts) {
+  let lerc;
+  try {
+    lerc = await window._lercReady;
+  } catch (e) {
+    throw new Error('LERC fallback: @esri/lerc not available — ' + e.message);
+  }
+
+  const fd   = image.fileDirectory;
+  const imgW = fd.ImageWidth,  imgH = fd.ImageLength;
+  const tw   = fd.TileWidth  || fd.ImageWidth;
+  const th   = fd.TileLength || fd.ImageLength;
+  const nTX  = Math.ceil(imgW / tw);
+  const nTY  = Math.ceil(imgH / th);
+
+  // Raw tile offsets and sizes from TIFF file directory
+  const rawOff = fd.TileOffsets  || fd.StripOffsets;
+  const rawBC  = fd.TileByteCounts || fd.StripByteCounts;
+  if (!rawOff || !rawBC) throw new Error('LERC fallback: no tile offset data in TIFF directory');
+  const offsets    = Array.from(rawOff);
+  const byteCounts = Array.from(rawBC);
+
+  // Determine output window (default = whole image)
+  const [winX0, winY0, winX1, winY1] = opts.window || [0, 0, imgW, imgH];
+  const outW = opts.width  || (winX1 - winX0);
+  const outH = opts.height || (winY1 - winY0);
+
+  // Which tiles overlap the window?
+  const txMin = Math.floor(winX0 / tw), txMax = Math.min(nTX - 1, Math.floor((winX1 - 1) / tw));
+  const tyMin = Math.floor(winY0 / th), tyMax = Math.min(nTY - 1, Math.floor((winY1 - 1) / th));
+
+  // Assemble a full-resolution canvas covering the window
+  const winW = winX1 - winX0, winH = winY1 - winY0;
+  let nBands = 0;
+  const tileData = [];
+
+  const sourceUrl = tiff._sourceUrl;
+  if (!sourceUrl) throw new Error('LERC fallback: tiff._sourceUrl not set');
+
+  for (let ty = tyMin; ty <= tyMax; ty++) {
+    for (let tx = txMin; tx <= txMax; tx++) {
+      const tIdx = ty * nTX + tx;
+      const off  = offsets[tIdx],  bc = byteCounts[tIdx];
+      if (!bc || bc === 0) continue;
+
+      const resp = await fetch(sourceUrl, { headers: { Range: 'bytes=' + off + '-' + (off + bc - 1) } });
+      if (!resp.ok) throw new Error('LERC tile fetch failed: HTTP ' + resp.status);
+      const ab = await resp.arrayBuffer();
+
+      const decoded = lerc.decode(ab);
+      if (!nBands) nBands = decoded.bandCount || decoded.pixels.length;
+
+      tileData.push({ tx, ty, decoded });
+    }
+  }
+
+  if (!nBands) throw new Error('LERC fallback: no tiles decoded');
+
+  // Assemble tile pixels into window-sized band arrays
+  const bands = Array.from({ length: nBands }, () => new Float32Array(winW * winH));
+  for (const { tx, ty, decoded } of tileData) {
+    const px = decoded.pixels;
+    const tileActualW = decoded.width  || tw;
+    const tileActualH = decoded.height || th;
+    // Tile origin in image coords
+    const tOriginX = tx * tw, tOriginY = ty * th;
+    // Overlap with window
+    const ox0 = Math.max(tOriginX, winX0), oy0 = Math.max(tOriginY, winY0);
+    const ox1 = Math.min(tOriginX + tileActualW, winX1);
+    const oy1 = Math.min(tOriginY + tileActualH, winY1);
+    for (let b = 0; b < nBands; b++) {
+      const src = px[b] || px;
+      const dst = bands[b];
+      for (let y = oy0; y < oy1; y++) {
+        for (let x = ox0; x < ox1; x++) {
+          const si = (y - tOriginY) * tileActualW + (x - tOriginX);
+          const di = (y - winY0)    * winW         + (x - winX0);
+          dst[di] = src[si];
+        }
+      }
+    }
+  }
+
+  // Resample to output size if needed
+  const result = [];
+  for (let b = 0; b < nBands; b++) {
+    if (outW === winW && outH === winH) {
+      result.push(bands[b]);
+    } else {
+      const out = new Float32Array(outW * outH);
+      const sx = winW / outW, sy = winH / outH;
+      for (let y = 0; y < outH; y++) {
+        for (let x = 0; x < outW; x++) {
+          out[y * outW + x] = bands[b][Math.round(y * sy) * winW + Math.round(x * sx)];
+        }
+      }
+      result.push(out);
+    }
+  }
+  result.width  = outW;
+  result.height = outH;
+  return result;
+}
+
+// ZSTD tile-by-tile fallback — fetches raw tiles, decompresses with ZstdCodec/fzstd,
+// then undoes PREDICTOR=2 horizontal differencing if present
+async function readRastersZstd(tiff, image, opts) {
+  let zstdLib;
+  try {
+    zstdLib = await window._zstdReady;
+  } catch (e) {
+    throw new Error('ZSTD fallback: zstd library not available — ' + e.message);
+  }
+
+  // Decompress function — handles both ZstdCodec (zstd.Simple) and fzstd APIs
+  function zstdDecompress(buf) {
+    const u8 = new Uint8Array(buf instanceof ArrayBuffer ? buf : buf.buffer, buf.byteOffset || 0, buf.byteLength || buf.buffer.byteLength);
+    if (zstdLib.decompress) return zstdLib.decompress(u8); // fzstd
+    if (zstdLib.Simple)     return new zstdLib.Simple().decompress(u8); // ZstdCodec
+    throw new Error('Unknown Zstd library API');
+  }
+
+  const fd   = image.fileDirectory;
+  const imgW = fd.ImageWidth, imgH = fd.ImageLength;
+  const tw   = fd.TileWidth  || fd.ImageWidth;
+  const th   = fd.TileLength || fd.ImageLength;
+  const nTX  = Math.ceil(imgW / tw);
+  const nTY  = Math.ceil(imgH / th);
+  const predictor   = fd.Predictor   || 1;
+  const samplesPerPixel = fd.SamplesPerPixel || 1;
+  const bitsPerSample   = Array.isArray(fd.BitsPerSample) ? fd.BitsPerSample[0] : (fd.BitsPerSample || 8);
+  const bytesPerSample  = bitsPerSample / 8;
+
+  const rawOff = fd.TileOffsets  || fd.StripOffsets;
+  const rawBC  = fd.TileByteCounts || fd.StripByteCounts;
+  if (!rawOff || !rawBC) throw new Error('ZSTD fallback: no tile offset data');
+  const offsets = Array.from(rawOff), byteCounts = Array.from(rawBC);
+
+  const [winX0, winY0, winX1, winY1] = opts.window || [0, 0, imgW, imgH];
+  const outW = opts.width  || (winX1 - winX0);
+  const outH = opts.height || (winY1 - winY0);
+  const winW = winX1 - winX0, winH = winY1 - winY0;
+
+  const txMin = Math.floor(winX0 / tw), txMax = Math.min(nTX - 1, Math.floor((winX1 - 1) / tw));
+  const tyMin = Math.floor(winY0 / th), tyMax = Math.min(nTY - 1, Math.floor((winY1 - 1) / th));
+
+  const nBands = samplesPerPixel;
+  const bands  = Array.from({ length: nBands }, () => new Float32Array(winW * winH));
+  const sourceUrl = tiff._sourceUrl;
+  if (!sourceUrl) throw new Error('ZSTD fallback: tiff._sourceUrl not set');
+
+  for (let ty = tyMin; ty <= tyMax; ty++) {
+    for (let tx = txMin; tx <= txMax; tx++) {
+      const tIdx = ty * nTX + tx;
+      const off = offsets[tIdx], bc = byteCounts[tIdx];
+      if (!bc) continue;
+
+      const resp = await fetch(sourceUrl, { headers: { Range: 'bytes=' + off + '-' + (off + bc - 1) } });
+      if (!resp.ok) throw new Error('ZSTD tile fetch HTTP ' + resp.status);
+      const compressed = new Uint8Array(await resp.arrayBuffer());
+      const raw = zstdDecompress(compressed);
+
+      // Undo PREDICTOR=2 (horizontal differencing) — each sample = cumulative delta
+      if (predictor === 2) {
+        const rowBytes = tw * nBands * bytesPerSample;
+        for (let row = 0; row < th; row++) {
+          const rowOff = row * rowBytes;
+          for (let b = 0; b < nBands; b++) {
+            for (let x = 1; x < tw; x++) {
+              const i = rowOff + (x * nBands + b) * bytesPerSample;
+              const p = rowOff + ((x - 1) * nBands + b) * bytesPerSample;
+              if (bytesPerSample === 1)      raw[i] = (raw[i] + raw[p]) & 0xFF;
+              else if (bytesPerSample === 2) { const v=(raw[i]|(raw[i+1]<<8))+(raw[p]|(raw[p+1]<<8)); raw[i]=v&0xFF; raw[i+1]=(v>>8)&0xFF; }
+            }
+          }
+        }
+      }
+
+      // Copy tile pixels into window bands
+      const tOriginX = tx * tw, tOriginY = ty * th;
+      const ox0 = Math.max(tOriginX, winX0), oy0 = Math.max(tOriginY, winY0);
+      const ox1 = Math.min(tOriginX + tw, winX1), oy1 = Math.min(tOriginY + th, winY1);
+
+      for (let b = 0; b < nBands; b++) {
+        for (let y = oy0; y < oy1; y++) {
+          for (let x = ox0; x < ox1; x++) {
+            const si = ((y - tOriginY) * tw + (x - tOriginX)) * nBands + b;
+            const di = (y - winY0) * winW + (x - winX0);
+            bands[b][di] = bytesPerSample === 1 ? raw[si]
+              : bytesPerSample === 2 ? (raw[si * 2] | (raw[si * 2 + 1] << 8)) : raw[si];
+          }
+        }
+      }
+    }
+  }
+
+  // Resample to output size
+  const result = [];
+  for (let b = 0; b < nBands; b++) {
+    if (outW === winW && outH === winH) {
+      result.push(bands[b]);
+    } else {
+      const out = new Float32Array(outW * outH);
+      const sx = winW / outW, sy = winH / outH;
+      for (let y = 0; y < outH; y++)
+        for (let x = 0; x < outW; x++)
+          out[y * outW + x] = bands[b][Math.round(y * sy) * winW + Math.round(x * sx)];
+      result.push(out);
+    }
+  }
+  result.width = outW; result.height = outH;
+  return result;
+}
+
+async function renderOneCog(cog) {
+  if (!cog) return;
+  const token = ++cog.token;
+  // Show spinner while rendering (but don't flash back if already done and just re-rendering on move)
+  if (cog.status === 'done') { cog.status = 'rendering'; _updateCogBar(); }
+
+  try {
+    const vp  = map.getBounds();
+    const vpW = map.getCanvas().width;
+    const vpH = map.getCanvas().height;
+    const [vpMinE, vpMinN] = toNZTM(vp.getWest(), vp.getSouth());
+    const [vpMaxE, vpMaxN] = toNZTM(vp.getEast(), vp.getNorth());
+
+    const intMinE = Math.max(vpMinE, cog.minE), intMinN = Math.max(vpMinN, cog.minN);
+    const intMaxE = Math.min(vpMaxE, cog.maxE), intMaxN = Math.min(vpMaxN, cog.maxN);
+    if (intMinE >= intMaxE || intMinN >= intMaxN) return;
+
+    const cogW = cog.image.getWidth(), cogH = cog.image.getHeight();
+    const cogSpanE = cog.maxE - cog.minE, cogSpanN = cog.maxN - cog.minN;
+    const screenW = Math.round(vpW * (intMaxE - intMinE) / (vpMaxE - vpMinE));
+    const screenH = Math.round(vpH * (intMaxN - intMinN) / (vpMaxN - vpMinN));
+    const cogPixW = Math.round(cogW * (intMaxE - intMinE) / cogSpanE);
+    const cogPixH = Math.round(cogH * (intMaxN - intMinN) / cogSpanN);
+    const readW = Math.max(1, Math.min(screenW, cogPixW));
+    const readH = Math.max(1, Math.min(screenH, cogPixH));
+
+    const winMinX = Math.max(0,    Math.floor((intMinE - cog.minE) / cogSpanE * cogW));
+    const winMaxX = Math.min(cogW, Math.ceil( (intMaxE - cog.minE) / cogSpanE * cogW));
+    const winMinY = Math.max(0,    Math.floor((cog.maxN - intMaxN) / cogSpanN * cogH));
+    const winMaxY = Math.min(cogH, Math.ceil( (cog.maxN - intMinN) / cogSpanN * cogH));
+
+    const data = await readRastersWithFallback(cog.tiff, cog.image, {
+      window: [winMinX, winMinY, winMaxX, winMaxY],
+      width: readW, height: readH, resampleMethod: 'bilinear',
+      pool: cogPool,
+    });
+    if (token !== cog.token) return;
+
+    const rgba = toRGBA(data, readW, readH);
+    const canvas = document.createElement('canvas');
+    canvas.width = readW; canvas.height = readH;
+    canvas.getContext('2d').putImageData(new ImageData(rgba, readW, readH), 0, 0);
+    const dataUrl = canvas.toDataURL('image/png');
+
+    const [intSwLng, intSwLat] = toWGS84(intMinE, intMinN);
+    const [intNwLng, intNwLat] = toWGS84(intMinE, intMaxN);
+    const [intNeLng, intNeLat] = toWGS84(intMaxE, intMaxN);
+    const [intSeLng, intSeLat] = toWGS84(intMaxE, intMinN);
+    if (token !== cog.token) return;
+
+    const coords = [[intNwLng,intNwLat],[intNeLng,intNeLat],[intSeLng,intSeLat],[intSwLng,intSwLat]];
+    const src = map.getSource(cog.sourceId);
+    if (src) {
+      src.updateImage({ url: dataUrl, coordinates: coords });
+    } else {
+      map.addSource(cog.sourceId, { type: 'image', url: dataUrl, coordinates: coords });
+      map.addLayer({ id: cog.layerId, type: 'raster', source: cog.sourceId,
+        paint: { 'raster-opacity': 0.9, 'raster-fade-duration': 150 } });
+    }
+    // Mark done on first successful render only
+    if (cog.status !== 'done') { cog.status = 'done'; _updateCogBar(); }
+  } catch (err) {
+    console.error('COG render error:', err);
+    if (cog.status !== 'done') { cog.status = 'error'; _updateCogBar(); }
+  }
+}
+
+function renderAllCogs() {
+  _cogMap.forEach(entry => renderOneCog(entry));
+}
+
+map.on('moveend', renderAllCogs);
+document.getElementById('cog-overlay-close').onclick = () => removeCogOverlay();
+</script>
+</body>
+</html>
