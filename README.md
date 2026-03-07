@@ -10,7 +10,7 @@ A browser-based map viewer for exploring New Zealand historical aerial photograp
 - **COG streaming** — load GeoTIFF tiles directly in the browser, rendered at viewport resolution
 - **Multi-COG overlay** — stack multiple imagery layers simultaneously for comparison
 - **Layer extents** — toggle footprint polygons showing the spatial coverage of each dataset
-- **LERC + Zstd decompression** — handles modern COG compression formats via `@esri/lerc`
+- **Multi-compression support** — handles WEBP, LERC, LERC+Zstd, and ZSTD+Predictor COGs transparently
 - **Metadata cards** — expandable result cards showing title, region, year, asset ID and more
 - **Error tracking** — integrated Bugsink (Sentry-compatible) for production diagnostics
 - **Debug panel** — real-time diagnostic window showing render events, errors, and layer activity
@@ -31,8 +31,10 @@ Browser
   ├── FlatGeobuf (FGB)        # Spatial index + feature metadata
   │     └── S3 bucket         # .fgb files per imagery series
   │
-  ├── GeoTIFF.js              # COG tile fetching via HTTP Range requests
-  │     └── @esri/lerc        # LERC / LERC+Zstd tile decompression
+  ├── GeoTIFF.js + Pool       # COG tile fetching via HTTP Range requests
+  │     ├── Browser WebP      # WEBP tile decompression (native, via Pool workers)
+  │     ├── @esri/lerc        # LERC / LERC+Zstd tile decompression (on demand)
+  │     └── ZstdCodec/fzstd   # ZSTD tile decompression (on demand)
   │
   └── proj4.js                # CRS reprojection (WGS84 ↔ EPSG:2193 NZTM2000)
 ```
@@ -54,21 +56,27 @@ All FGB files are stored in **EPSG:2193 (NZTM2000)** — New Zealand Transverse 
 1. `GeoTIFF.fromUrl()` opens the COG with `allowFullFile: true`
 2. The current map viewport is projected into the COG's native CRS (NZTM2000)
 3. The viewport/COG intersection is computed to determine the visible window
-4. `readRasters()` fetches only the visible tile data via HTTP Range requests
-5. Raw raster bands are normalised to 0–255 and written to a canvas
-6. The canvas is added as a `raster` source in MapLibre using `addSource` / `updateImage`
-7. On `moveend` all active COGs re-render at the new viewport resolution
+4. `readRasters({ pool })` fetches only the visible tile data via HTTP Range requests
+5. Compression is handled automatically (see table below)
+6. Raw raster bands are normalised to 0–255 and written to a canvas
+7. The canvas is added as a `raster` source in MapLibre via `addSource` / `updateImage`
+8. On `moveend` all active COGs re-render at the new viewport resolution
 
-### LERC Decompression
+### Compression Handling
 
-COGs from the NZ imagery archive use **LERC compression (method 50000)** and **LERC+Zstd (method 50001)**. `geotiff.js` does not natively support these. A fallback path:
+NZ imagery COGs use a variety of compression methods. The app detects the compression tag from the TIFF file directory and routes to the appropriate decoder:
 
-1. Detects the compression error from `geotiff.js`
-2. Reads tile offsets and byte counts directly from the TIFF file directory
-3. Fetches each tile individually via HTTP Range requests
-4. Decodes using `@esri/lerc` (which bundles its own Zstd decompressor)
-5. Assembles tiles into a full raster and resamples to the output viewport size
-6. Falls back through overview levels (smallest first) to minimise data transfer
+| TIFF Tag | Compression | Handler |
+|----------|-------------|---------|
+| 50002 | WEBP (lossless) | `GeoTIFF.Pool` — browser-native WebP in worker threads |
+| 5, 8 | LZW / Deflate | `GeoTIFF.Pool` — geotiff.js native |
+| 50000 | LERC | Tile-fetch fallback + `@esri/lerc` |
+| 50001 | LERC + Zstd | Tile-fetch fallback + `@esri/lerc` (includes Zstd internally) |
+| 50003 | ZSTD + Predictor=2 | Tile-fetch fallback + `ZstdCodec`/`fzstd` + horizontal differencing undo |
+
+The primary path (`readRasters` + Pool) is attempted first. If it fails, the compression tag is inspected and the appropriate fallback is invoked. Fallback decoders fetch raw tile bytes directly via HTTP Range requests, decompress them, and reassemble the raster manually.
+
+`@esri/lerc` and the Zstd library are loaded asynchronously in the background on page load (ESRI CDN → jsdelivr → unpkg). The debug panel reports their status on startup.
 
 ---
 
@@ -91,11 +99,15 @@ FGB files contain feature properties including `title`, `region`, `year`, `asses
 |---------|---------|---------|
 | [MapLibre GL JS](https://maplibre.org/) | 4.5.0 | Interactive WebGL map |
 | [FlatGeobuf](https://flatgeobuf.org/) | 3.35.0 | Streaming spatial file format |
-| [GeoTIFF.js](https://geotiffjs.github.io/) | 2.1.3 | COG tile fetching and decoding |
-| [@esri/lerc](https://github.com/Esri/lerc) | 4.0.1 | LERC and LERC+Zstd decompression |
-| [proj4js](https://proj4js.org/) | 2.9.0 | CRS reprojection |
+| [GeoTIFF.js](https://geotiffjs.github.io/) | 2.1.3 | COG tile fetching, decoding, and worker pool |
+| [@esri/lerc](https://github.com/Esri/lerc) | 4.0.1 | LERC and LERC+Zstd decompression (on demand) |
+| [zstd-codec](https://github.com/yoshihitofujiwara/zstd-codec) | 0.1.5 | ZSTD decompression for geotiff.js 2.1.x (on demand) |
+| [fzstd](https://github.com/101arrowz/fzstd) | 0.1.1 | ZSTD decompression fallback for geotiff.js 2.2+ (on demand) |
+| [proj4js](https://proj4js.org/) | 2.9.0 | CRS reprojection (WGS84 ↔ NZTM2000) |
 | [Sentry SDK](https://sentry.io/) | 7.99.0 | Error tracking (via Bugsink) |
 | [OpenFreeMap](https://openfreemap.org/) | — | Base map tiles (dark style) |
+
+`@esri/lerc`, `zstd-codec`, and `fzstd` are loaded on demand via CDN and do not block initial page load.
 
 ---
 
@@ -111,7 +123,7 @@ Imagery layers are configured in the `CONFIG.layers` array at the top of the scr
 }
 ```
 
-Adding a new series requires only uploading an FGB file and adding one entry to this array.
+Adding a new series requires only uploading an FGB file and adding one entry to this array. Compression type is detected automatically — no per-layer configuration needed.
 
 ---
 
@@ -136,7 +148,8 @@ Errors logged via `debugErr()` in the diagnostic panel are also forwarded to Bug
 |---------|---------|
 | WebGL | Chrome 56+, Firefox 51+ |
 | HTTP Range requests | All modern browsers |
-| `@esri/lerc` WASM | Chrome 57+, Firefox 52+ |
+| WebP image decoding | Chrome 32+, Firefox 65+, Safari 14+ |
+| Web Workers (GeoTIFF Pool) | All modern browsers |
 
 ---
 
@@ -144,4 +157,4 @@ Errors logged via `debugErr()` in the diagnostic panel are also forwarded to Bug
 
 No build step required. Edit `index.html` directly and open in a browser.
 
-The built-in debug panel (bottom-right, red border) logs all layer queries, COG render events, compression fallback activity, and errors in real time.
+The built-in debug panel (bottom-right, red border) logs all layer queries, COG render events, compression fallback activity, and library load status in real time.
