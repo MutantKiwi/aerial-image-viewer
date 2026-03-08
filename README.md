@@ -2,6 +2,7 @@
 
 A browser-based map viewer for exploring New Zealand historical aerial photography. Click anywhere on the map to query intersecting imagery layers, inspect metadata, and stream Cloud Optimised GeoTIFFs directly onto the map for visual comparison.
 
+Try it here - [https://imagery.mutant.kiwi/index.html]([https://imagery.mutant.kiwi/index.html)
 ---
 
 ## Features
