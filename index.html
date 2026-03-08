@@ -16,7 +16,12 @@
 
 <!-- GeoTIFF for COG streaming — WEBP tiles decoded natively via Pool -->
 <script src="https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js"></script>
-<!-- @esri/lerc: loaded on demand for LERC/LERC+Zstd COGs (not all layers need this) -->
+<!-- ═══════════════════════════════════════════════════════════════
+     @esri/lerc — LERC / LERC+Zstd decompressor (loaded on demand)
+     Only needed for COGs with TIFF compression tag 50000 or 50001.
+     Tries ESRI's own CDN first (most reliable), then npm CDN fallbacks.
+     Resolves window._lercReady with the library instance once ready.
+     ═══════════════════════════════════════════════════════════════ -->
 <script>
 window._lercReady = new Promise((resolve, reject) => {
   const urls = [
@@ -42,8 +47,12 @@ window._lercReady = new Promise((resolve, reject) => {
   tryNext();
 });
 </script>
-<!-- zstd-codec + fzstd: for native ZSTD-compressed COGs (TIFF compression 50003) -->
-<!-- geotiff.js 2.1.3 checks for window.ZstdCodec; fzstd as fallback for newer builds -->
+<!-- ═══════════════════════════════════════════════════════════════
+     Zstd decompressor — for COGs with TIFF compression tag 50003.
+     zstd-codec is tried first (matches geotiff.js 2.1.x internals),
+     then fzstd (compatible with geotiff.js 2.2+).
+     Resolves window._zstdReady with the decompressor instance.
+     ═══════════════════════════════════════════════════════════════ -->
 <script>
 window._zstdReady = new Promise((resolve, reject) => {
   // Try zstd-codec first (matches geotiff.js 2.1.x internal check)
@@ -264,12 +273,16 @@ window._zstdReady = new Promise((resolve, reject) => {
   }
   #cog-bar-header-title { color: var(--accent2); font-weight: 700; letter-spacing: .08em; flex: 1; }
   #cog-bar-count { color: var(--muted); }
-  #cog-overlay-close {
-    background: transparent; border: none; color: var(--muted); cursor: pointer;
+  #cog-overlay-close, #cog-bar-dl-all {
+    background: transparent; border: none; cursor: pointer;
     font: 10px 'JetBrains Mono', monospace; padding: 2px 6px; border-radius: 3px;
     transition: color 0.15s;
   }
+  #cog-overlay-close { color: var(--muted); }
   #cog-overlay-close:hover { color: #ff6b47; }
+  #cog-bar-dl-all { color: var(--accent2); }
+  #cog-bar-dl-all:hover { color: #fff; }
+  #cog-bar-dl-all:disabled { color: var(--muted); cursor: default; }
   #cog-bar-loading {
     padding: 7px 12px; color: var(--accent2); font-size: 10px;
     display: none; align-items: center; gap: 8px;
@@ -309,8 +322,37 @@ window._zstdReady = new Promise((resolve, reject) => {
     transition: color 0.15s; flex-shrink: 0;
   }
   .cog-bar-row-remove:hover { color: #ff6b47; }
+  .cog-bar-row-dl {
+    background: transparent; border: none; color: var(--muted); cursor: pointer;
+    font-size: 11px; padding: 2px 5px; border-radius: 3px; flex-shrink: 0;
+    text-decoration: none; transition: color 0.15s;
+  }
+  .cog-bar-row-dl:hover { color: var(--accent2); }
 
   * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+
+  /* ── COG right-click context menu ── */
+  #cog-context-menu {
+    position: fixed; z-index: 99998; display: none;
+    background: rgba(8,10,13,0.97); border: 1px solid rgba(71,200,255,0.25);
+    border-radius: 6px; backdrop-filter: blur(12px);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    min-width: 200px; overflow: hidden;
+  }
+  #cog-context-menu.visible { display: block; }
+  .ctx-header {
+    padding: 6px 12px 5px; color: var(--muted); font-size: 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ctx-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 12px; color: var(--text); text-decoration: none;
+    cursor: pointer; transition: background 0.1s;
+  }
+  .ctx-item:hover { background: rgba(71,200,255,0.08); color: var(--accent2); }
+  .ctx-item-icon { font-size: 13px; flex-shrink: 0; }
   /* ── Debug window ── */
   #debug-win {
     position:fixed; bottom:16px; right:16px; z-index:99999;
@@ -366,10 +408,18 @@ window._zstdReady = new Promise((resolve, reject) => {
   <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
 </button>
 
+<div id="cog-context-menu">
+  <div class="ctx-header" id="ctx-layer-name"></div>
+  <a class="ctx-item" id="ctx-download-link" href="#" download>
+    <span class="ctx-item-icon">↓</span> Download GeoTIFF
+  </a>
+</div>
+
 <div id="cog-overlay-bar">
   <div id="cog-bar-header">
     <span id="cog-bar-header-title">SHEETS ON MAP</span>
     <span id="cog-bar-count"></span>
+    <button id="cog-bar-dl-all" title="Download all rendered sheets">↓ all</button>
     <button id="cog-overlay-close">✕ clear all</button>
   </div>
   <div id="cog-bar-loading">
@@ -396,7 +446,10 @@ window._zstdReady = new Promise((resolve, reject) => {
 
 <script>
 // ═══════════════════════════════════════════════════════════════════
-// SENTRY ERROR TRACKING
+// STARTUP CHECKS
+// Log decoder library status to the debug panel on page load.
+// This gives immediate visibility into which compression paths are
+// available and confirms the page is ready to render COGs.
 document.addEventListener('DOMContentLoaded', () => {
   debugInfo('GeoTIFF Pool ready — WEBP/LZW/Deflate/JPEG native; LERC+ZSTD via fallback');
   window._lercReady
@@ -406,6 +459,12 @@ document.addEventListener('DOMContentLoaded', () => {
     .then(() => debugInfo('Zstd ready ✓ (ZstdCodec or fzstd)'))
     .catch(err => debugInfo('Zstd unavailable (' + err.message + ')'));
 });
+// ═══════════════════════════════════════════════════════════════════
+// SENTRY / BUGSINK ERROR TRACKING
+// Uses the Sentry JS SDK to forward errors to a self-hosted Bugsink
+// instance. MapLibre sprite warnings are suppressed — they are noisy
+// and not actionable. debugErr() also calls captureMessage() so
+// COG render failures are tracked automatically.
 // ═══════════════════════════════════════════════════════════════════
 if (typeof Sentry !== 'undefined') {
   Sentry.init({
@@ -423,14 +482,17 @@ if (typeof Sentry !== 'undefined') {
 // CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════
 
-// FGB files are in EPSG:2193 (NZTM2000, metres). Clicks are WGS84.
+// FGB files are stored in EPSG:2193 (NZTM2000, metres).
+// Map clicks arrive as WGS84 (EPSG:4326, lng/lat degrees).
+// All spatial queries and COG viewport calculations use NZTM2000
+// internally; results are reprojected back to WGS84 for MapLibre.
 proj4.defs('EPSG:2193',
   '+proj=tmerc +lat_0=0 +lon_0=173 +k=0.9996 +x_0=1600000 +y_0=10000000 ' +
   '+ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs');
 const toNZTM  = (lng, lat) => proj4('EPSG:4326', 'EPSG:2193', [lng, lat]);
 const toWGS84 = (e, n)     => proj4('EPSG:2193', 'EPSG:4326', [e, n]);
 
-// FIX 1: correct base URL for all .fgb files
+// Base URL for all FGB and COG files hosted on S3
 const BASE_URL = 'https://s3.dualstack.ap-southeast-2.amazonaws.com/gbf.nz.imagery/layers/';
 
 const CONFIG = {
@@ -462,6 +524,8 @@ const CONFIG = {
 // ═══════════════════════════════════════════════════════════════════
 // MAP INIT
 // ═══════════════════════════════════════════════════════════════════
+// Initialise MapLibre map centred on Northland, NZ.
+// OpenFreeMap dark style provides the base tile layer.
 const map = new maplibregl.Map({
   container: 'map',
   style: CONFIG.mapStyle,
@@ -473,11 +537,14 @@ const map = new maplibregl.Map({
 map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-left');
 map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
 
+// Live coordinate display in bottom-left bar as the mouse moves.
 map.on('mousemove', e => {
   document.getElementById('coords-bar').textContent =
     `${e.lngLat.lat.toFixed(6)}, ${e.lngLat.lng.toFixed(6)}`;
 });
 
+// Places an animated pulse marker at the last-clicked map position.
+// Removes any previous marker before adding the new one.
 let clickMarker = null;
 function placeMarker(lngLat) {
   if (clickMarker) clickMarker.remove();
@@ -496,14 +563,19 @@ const countEl    = document.getElementById('count-n');
 const progressEl = document.getElementById('progress-bar');
 const panelCoord = document.getElementById('panel-coords');
 
+// Tracks the active query token so stale queries can be cancelled
+// when the user clicks a new location.
 let currentQuery = null;
 
+// Slides the debug panel left when the results panel is open,
+// so they don't overlap. Uses CSS transition for smooth movement.
 function _shiftDebug(panelOpen) {
   const dbg = document.getElementById('debug-win');
   if (!dbg) return;
   dbg.style.right = panelOpen ? 'calc(var(--panel-w) + 16px)' : '16px';
 }
 
+// Show/hide the results side panel and shift debug window accordingly.
 function openPanel()  {
   panel.classList.add('open');
   _shiftDebug(true);
@@ -526,6 +598,20 @@ document.getElementById('close-btn').onclick = () => {
 // QUERY ENGINE
 // ═══════════════════════════════════════════════════════════════════
 
+// Query a single FGB layer for features intersecting a map click.
+//
+// Strategy: convert the WGS84 click to NZTM2000, build a 5km bounding
+// box, use flatgeobuf HTTP range request to stream only overlapping
+// features, then do a precise point-in-polygon test on each candidate.
+//
+// Returns an array of matching GeoJSON features (geometry reprojected
+// to WGS84 so MapLibre can use them directly).
+//
+// @param {object}  layerDef  - CONFIG.layers entry { url, label, imageUrlField }
+// @param {number}  lngWGS    - Click longitude (WGS84)
+// @param {number}  latWGS    - Click latitude (WGS84)
+// @param {object}  token     - Cancellation token { cancelled: bool }
+// @returns {Feature[]}
 async function queryFlatGeobuf(layerDef, lngWGS, latWGS, token) {
   if (token.cancelled) return [];
 
@@ -559,6 +645,8 @@ async function queryFlatGeobuf(layerDef, lngWGS, latWGS, token) {
   }
 }
 
+// Reproject a GeoJSON geometry from NZTM2000 (EPSG:2193) to WGS84.
+// Handles Polygon and MultiPolygon; returns other types unchanged.
 function reprojectGeom(geom) {
   if (!geom) return geom;
   const rr = ring => ring.map(([x, y]) => toWGS84(x, y));
@@ -570,9 +658,13 @@ function reprojectGeom(geom) {
 // ═══════════════════════════════════════════════════════════════════
 // DEBUG WINDOW
 // ═══════════════════════════════════════════════════════════════════
-const _debugEntries = []; // { ts, level, msg }
+// Ring buffer of debug log entries (max 200). Each entry: { ts, level, msg }.
+// Displayed in the floating debug panel (bottom-right, red border).
+const _debugEntries = [];
 let _debugVisible = true;
 
+// Build and inject the debug panel DOM. Called on DOMContentLoaded.
+// The panel shows timestamped log entries with colour-coded severity.
 function _buildDebugUI() {
   const el = document.createElement('div');
   el.id = 'debug-win';
@@ -593,6 +685,8 @@ function _buildDebugUI() {
   };
 }
 
+// Re-render the debug panel body from _debugEntries.
+// Updates the badge count and highlights error count in red.
 function _renderDebug() {
   const body  = document.getElementById('debug-body');
   const badge = document.getElementById('debug-badge');
@@ -606,6 +700,10 @@ function _renderDebug() {
   }).join('');
 }
 
+// Core log function. Adds an entry to _debugEntries, forwards errors
+// to Sentry, and re-shows the debug panel if it was minimised.
+// @param {string} msg   - Message text
+// @param {string} level - 'info' | 'warn' | 'error'
 function debugLog(msg, level) {
   const lvl = level || (msg.startsWith('ERR') || msg.startsWith('\u26a0') ? 'error' : 'warn');
   const ts  = new Date().toTimeString().slice(0,8);
@@ -629,10 +727,13 @@ function debugLog(msg, level) {
   _renderDebug();
 }
 
+// Convenience wrappers for the two most common log levels.
 function debugInfo(msg) { debugLog(msg, 'info'); }
 function debugErr(msg)  { debugLog(msg, 'error'); }
 
-// Intercept console.error/warn globally — guard against re-entrancy
+// Intercept console.error/warn globally so all library errors (MapLibre,
+// GeoTIFF.js, etc.) also appear in the debug panel and are forwarded
+// to Sentry. The _dbgInProgress flag prevents infinite recursion.
 let _dbgInProgress = false;
 const _origError = console.error.bind(console);
 const _origWarn  = console.warn.bind(console);
@@ -655,6 +756,8 @@ console.warn = (...args) => {
 
 document.addEventListener('DOMContentLoaded', _buildDebugUI);
 
+// Test whether a NZTM2000 point (lng=easting, lat=northing) falls
+// inside a GeoJSON feature's polygon or multipolygon geometry.
 function pointInFeature(lng, lat, feature) {
   const geom = feature.geometry;
   if (!geom) return false;
@@ -664,6 +767,8 @@ function pointInFeature(lng, lat, feature) {
   return polys.some(poly => pointInPolygon(lng, lat, poly[0]));
 }
 
+// Ray-casting point-in-polygon test for a single ring.
+// Returns true if (x, y) is inside the coordinate ring.
 function pointInPolygon(x, y, ring) {
   let inside = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
@@ -679,7 +784,7 @@ function pointInPolygon(x, y, ring) {
 // MAIN CLICK HANDLER
 // ═══════════════════════════════════════════════════════════════════
 map.on('click', async e => {
-  // Ignore clicks on extents layers — those have their own handler
+  // Ignore clicks that land on an extents polygon — those fire loadCogOnMap directly.
   const extentsFillIds = [..._extentsLayers.values()].map(v => v.fillId);
   const hitExtents = extentsFillIds.length && map.queryRenderedFeatures(e.point, { layers: extentsFillIds }).length > 0;
   if (hitExtents) return;
@@ -755,6 +860,12 @@ map.on('click', async e => {
 // ═══════════════════════════════════════════════════════════════════
 // CARD RENDERING
 // ═══════════════════════════════════════════════════════════════════
+// Build and append a result card for a single matched feature.
+// Cards are collapsible; expanding one collapses others.
+// Wires up the "Open on Map", "Copy URL", and "Show Extents" buttons.
+//
+// @param {Feature} feature - GeoJSON feature with ._layer attached
+// @param {number}  index   - 1-based display index
 function appendCard(feature, index) {
   const layer   = feature._layer;
   const props   = feature.properties || {};
@@ -821,13 +932,13 @@ function appendCard(feature, index) {
   // Wire Open on Map button via data attributes (avoids inline JSON quoting issues)
   const cogBtn = card.querySelector('[data-cog-url]');
   if (cogBtn && imageUrl) {
-    cogBtn.dataset.cogUrl     = imageUrl;
-    cogBtn.dataset.cogLabel   = layer.label;
-    cogBtn.dataset.cogAssetId = props.asset_id || props.assest_id || _assetIdFromUrl(imageUrl);
-    debugInfo('Card props keys: ' + Object.keys(props).join(', '));
+    cogBtn.dataset.cogUrl          = imageUrl;
+    cogBtn.dataset.cogLabel        = layer.label;
+    cogBtn.dataset.cogTitleUnicode = props.title_unicode || '';
+    cogBtn.dataset.cogAssetId      = props.assest_id || props.asset_id || '';
     cogBtn.addEventListener('click', e => {
       e.stopPropagation();
-      loadCogOnMap(cogBtn.dataset.cogUrl, cogBtn.dataset.cogLabel, cogBtn.dataset.cogAssetId);
+      loadCogOnMap(cogBtn.dataset.cogUrl, cogBtn.dataset.cogLabel, cogBtn.dataset.cogAssetId, cogBtn.dataset.cogTitleUnicode);
     });
   }
 
@@ -844,6 +955,10 @@ function appendCard(feature, index) {
 }
 
 
+// Convert geotiff.js raster band arrays to a flat RGBA Uint8ClampedArray
+// suitable for ImageData / canvas rendering.
+// Handles grayscale (1 band), RGB (3 bands), and RGBA (4 bands).
+// Values > 255 are assumed to be 16-bit and are scaled by dividing by 256.
 function toRGBA(bands, w, h) {
   const n = w * h;
   const out = new Uint8ClampedArray(n * 4);
@@ -860,6 +975,7 @@ function toRGBA(bands, w, h) {
   }
   return out;
 }
+// Scale a pixel value to 8-bit range (handles 16-bit source data).
 function normalise(v) { return v > 255 ? Math.round(v / 256) : v; }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -878,6 +994,8 @@ map.on('load', () => {
     paint: { 'line-color': '#47c8ff', 'line-width': 2, 'line-opacity': 0.9 } });
 });
 
+// Show a feature's polygon footprint on the map.
+// If pin=true, locks the footprint until clearFootprint() is called.
 function showFootprint(feature, pin) {
   if (!feature || !feature.geometry) return;
   if (pin) {
@@ -889,12 +1007,14 @@ function showFootprint(feature, pin) {
     features: [{ type: 'Feature', geometry: feature.geometry, properties: {} }] });
 }
 
+// Clear the footprint only if it is not pinned (hover-only state).
 function clearFootprintIfHover() {
   if (_fpPinned) return;
   const src = map.getSource(FP_SOURCE);
   if (src) src.setData({ type: 'FeatureCollection', features: [] });
 }
 
+// Fully clear the footprint and unpin it (called on panel close).
 function clearFootprint() {
   _fpPinned = false;
   document.querySelectorAll('.result-card.footprint-active').forEach(el => el.classList.remove('footprint-active'));
@@ -906,6 +1026,7 @@ function clearFootprint() {
 // UTILITIES
 // ═══════════════════════════════════════════════════════════════════
 
+// Copy text to clipboard and briefly flash the button label as "✓ Copied!".
 async function copyToClipboard(text, btn) {
   try {
     await navigator.clipboard.writeText(text);
@@ -916,6 +1037,7 @@ async function copyToClipboard(text, btn) {
   } catch {}
 }
 
+// Escape a string for safe insertion into HTML attribute or text content.
 function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
@@ -930,6 +1052,8 @@ document.getElementById('config-btn').onclick = () => {};
 // ═══════════════════════════════════════════════════════════════════
 const _extentsLayers = new Map(); // layerUrl -> { sourceId, fillId, lineId }
 
+// Update the Show/Hide Extents button label and styling to reflect
+// the current load state: 'loading' | 'hide' | 'show' | 'failed'
 function _setExtentsBtn(btn, state) {
   btn.disabled = false;
   btn.style.borderColor = '';
@@ -949,6 +1073,8 @@ function _setExtentsBtn(btn, state) {
   }
 }
 
+// Remove an extents layer and its MapLibre source/layers from the map.
+// Cleans up all event listeners and resets the toggle button.
 function _removeExtentsEntry(key, btn) {
   const entry = _extentsLayers.get(key);
   if (!entry) return;
@@ -964,6 +1090,13 @@ function _removeExtentsEntry(key, btn) {
   if (btn) _setExtentsBtn(btn, 'show');
 }
 
+// Toggle the spatial extents overlay for a layer on/off.
+// On first show: streams the entire FGB file, adds fill + line layers,
+// and wires polygon clicks to load the clicked COG sheet.
+// On hide: removes the layers and cleans up listeners.
+//
+// @param {object}      layerDef - CONFIG.layers entry
+// @param {HTMLElement} btn      - The toggle button element
 async function toggleLayerExtents(layerDef, btn) {
   const key = layerDef.url;
 
@@ -1039,9 +1172,10 @@ async function toggleLayerExtents(layerDef, btn) {
                 || feat.properties['url']
                 || feat.properties['href'];
     if (!cogUrl) { debugErr('No COG URL on clicked feature'); return; }
-    const assetId = feat.properties['asset_id'] || feat.properties['assest_id'] || feat.properties['ASSET_ID'] || _assetIdFromUrl(cogUrl);
+    const assetId      = feat.properties['assest_id'] || feat.properties['asset_id'] || '';
+    const titleUnicode = feat.properties['title_unicode'] || '';
     debugInfo('asset_id=' + assetId + ' props=' + Object.keys(feat.properties || {}).join(','));
-    loadCogOnMap(cogUrl, layerDef.label, assetId);
+    loadCogOnMap(cogUrl, layerDef.label, assetId, titleUnicode);
   };
   entry.onEnter = () => { map.getCanvas().style.cursor = 'pointer'; };
   entry.onLeave = () => { map.getCanvas().style.cursor = ''; };
@@ -1052,24 +1186,65 @@ async function toggleLayerExtents(layerDef, btn) {
 }
 
 
-// COG MAP OVERLAY
+// ═══════════════════════════════════════════════════════════════════
 // MULTI-COG MAP OVERLAY
-// Each loaded COG gets its own source/layer keyed by URL.
-// renderAllCogs() re-renders every active COG on moveend.
+// Each loaded COG gets its own MapLibre image source and raster layer,
+// both keyed by URL. The _cogMap Map tracks all active entries.
+//
+// On every map moveend, renderAllCogs() re-fetches the visible tile
+// window for each COG at the new viewport bounds and resolution.
+//
+// Compression routing (readRastersWithFallback):
+//   WEBP (50002)        → geotiff.js Pool (native browser WebP)
+//   LZW/Deflate (5/8)   → geotiff.js Pool (native)
+//   LERC (50000/50001)  → readRastersLerc() via @esri/lerc
+//   ZSTD (50003)        → readRastersZstd() via ZstdCodec/fzstd
 // ═══════════════════════════════════════════════════════════════════
 // GeoTIFF decoder pool — required for WEBP-compressed COG tiles
 const cogPool = new GeoTIFF.Pool();
 const _cogMap  = new Map(); // url -> { tiff, image, minE,minN,maxE,maxN, label, sourceId, layerId, token }
 
+// Extract a bare asset ID from a COG URL by stripping the path and extension.
+// Used as a fallback when assest_id is not in the feature properties.
 function _assetIdFromUrl(url) {
   return (url || '').split('/').pop().replace(/\.[^.]+$/, '');
 }
 
+// Download filename: title_unicode_assetId.tif
+function _cogDownloadName(entry) {
+  const ext = (entry.url.split('.').pop() || 'tif').toLowerCase();
+  return entry.titleUnicode + '_' + entry.assetId + '.' + ext;
+}
+
+// Fetch file and trigger save-as with correct filename (bypasses cross-origin download attr restriction)
+async function blobDownload(url, filename) {
+  debugInfo('Downloading ' + filename + '…');
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const blob = await resp.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    debugInfo('Download ready: ' + filename);
+  } catch(err) {
+    debugErr('Download failed: ' + err.message);
+  }
+}
+
+// Generate stable, unique MapLibre source and layer IDs for a COG URL.
+// IDs are based on a slug of the filename so they are human-readable
+// in the MapLibre style inspector.
 function _cogIds(url) {
   const slug = url.split('/').pop().replace(/\W/g,'_').slice(0,40);
   return { sourceId: 'cog-' + slug + '-src', layerId: 'cog-' + slug + '-lyr' };
 }
 
+// Remove one COG overlay (by URL) or all overlays (no argument).
+// Cancels any in-flight render by invalidating the entry token,
+// removes the MapLibre source and layer, and updates the bar.
 function removeCogOverlay(url) {
   if (url) {
     const entry = _cogMap.get(url);
@@ -1085,6 +1260,11 @@ function removeCogOverlay(url) {
   _updateCogBar();
 }
 
+// Rebuild the floating "SHEETS ON MAP" pill from the current _cogMap state.
+// Each row shows: status icon | layer label | asset ID | download ↓ | remove ✕
+// Status icons: spinning = rendering, ✓ = done, ! = error.
+// The download link uses blobDownload() to force the correct filename
+// (cross-origin <a download> is ignored by browsers).
 function _updateCogBar() {
   const bar     = document.getElementById('cog-overlay-bar');
   const list    = document.getElementById('cog-bar-list');
@@ -1107,6 +1287,7 @@ function _updateCogBar() {
       <span class="cog-bar-row-status">${statusHtml}</span>
       <span class="cog-bar-row-label" title="${escHtml(e.label)}">${escHtml(e.label)}</span>
       <span class="cog-bar-row-asset">${escHtml(e.assetId || '—')}</span>
+      <a class="cog-bar-row-dl" href="#" data-dl-url="${escHtml(url)}" data-dl-name="${escHtml(_cogDownloadName(e))}" title="Download GeoTIFF">↓</a>
       <button class="cog-bar-row-remove" data-remove-url="${escHtml(url)}">✕</button>
     </div>`;
   }).join('');
@@ -1114,9 +1295,21 @@ function _updateCogBar() {
   list.querySelectorAll('[data-remove-url]').forEach(btn => {
     btn.addEventListener('click', () => removeCogOverlay(btn.dataset.removeUrl));
   });
+  list.querySelectorAll('[data-dl-url]').forEach(a => {
+    a.addEventListener('click', e => { e.preventDefault(); blobDownload(a.dataset.dlUrl, a.dataset.dlName); });
+  });
 }
 
-async function loadCogOnMap(url, label, assetId) {
+// Open a COG on the map. Fetches the TIFF header, stores the entry in
+// _cogMap, zooms to the COG's bounding box, then triggers renderOneCog().
+// Duplicate loads (same URL already in _cogMap) are skipped — the
+// existing overlay is just re-rendered at the current viewport.
+//
+// @param {string} url          - Full URL of the COG .tif file
+// @param {string} label        - Human-readable layer name (from CONFIG)
+// @param {string} assetId      - From FGB feature property 'assest_id'
+// @param {string} titleUnicode - From FGB feature property 'title_unicode'
+async function loadCogOnMap(url, label, assetId, titleUnicode) {
   // If already loaded, just re-render (no duplicate)
   if (_cogMap.has(url)) {
     debugInfo('COG already on map: ' + url.split('/').pop());
@@ -1142,7 +1335,8 @@ async function loadCogOnMap(url, label, assetId) {
     const { sourceId, layerId } = _cogIds(url);
 
     const entry = { tiff, image, minE, minN, maxE, maxN, label, url,
-                    assetId: assetId || _assetIdFromUrl(url),
+                    assetId: assetId,
+                    titleUnicode: titleUnicode,
                     sourceId, layerId, token: 0, status: 'rendering',
                     nwLng, nwLat, neLng, neLat, seLng, seLat, swLng, swLat };
     _cogMap.set(url, entry);
@@ -1168,6 +1362,12 @@ async function loadCogOnMap(url, label, assetId) {
 
 
 
+// Attempt readRasters via geotiff.js Pool (handles WEBP/LZW/Deflate/JPEG).
+// On failure, inspect the TIFF compression tag and route to the
+// appropriate manual tile-fetch fallback:
+//   50000 / 50001  → readRastersLerc()
+//   50003          → readRastersZstd()
+// Other compression failures are re-thrown as fatal errors.
 async function readRastersWithFallback(tiff, image, opts) {
   // Primary path: geotiff.js + Pool handles WEBP, LZW, Deflate, JPEG natively
   try {
@@ -1187,7 +1387,16 @@ async function readRastersWithFallback(tiff, image, opts) {
   }
 }
 
-// LERC tile-by-tile fallback — fetches raw tiles via Range requests and decodes with @esri/lerc
+// ─────────────────────────────────────────────────────────────────
+// LERC FALLBACK  (compression tags 50000 = LERC, 50001 = LERC+Zstd)
+//
+// geotiff.js cannot decode LERC natively. This function:
+//   1. Reads TileOffsets + TileByteCounts from the TIFF file directory
+//   2. Fetches each overlapping tile individually via HTTP Range requests
+//   3. Decodes with @esri/lerc (which handles both LERC and LERC+Zstd)
+//   4. Assembles the decoded tiles into a window-sized band array
+//   5. Resamples to the requested output dimensions
+// ─────────────────────────────────────────────────────────────────
 async function readRastersLerc(tiff, image, opts) {
   let lerc;
   try {
@@ -1292,8 +1501,18 @@ async function readRastersLerc(tiff, image, opts) {
   return result;
 }
 
-// ZSTD tile-by-tile fallback — fetches raw tiles, decompresses with ZstdCodec/fzstd,
-// then undoes PREDICTOR=2 horizontal differencing if present
+// ─────────────────────────────────────────────────────────────────
+// ZSTD FALLBACK  (compression tag 50003, often with PREDICTOR=2)
+//
+// geotiff.js cannot decode native ZSTD. This function:
+//   1. Reads TileOffsets + TileByteCounts from the TIFF file directory
+//   2. Fetches each overlapping tile via HTTP Range requests
+//   3. Decompresses with ZstdCodec or fzstd (whichever loaded)
+//   4. Undoes PREDICTOR=2 horizontal differencing if present
+//      (each sample value is stored as a delta from its left neighbour;
+//       we reverse this by computing the cumulative sum per row)
+//   5. Assembles and resamples the output bands
+// ─────────────────────────────────────────────────────────────────
 async function readRastersZstd(tiff, image, opts) {
   let zstdLib;
   try {
@@ -1402,6 +1621,24 @@ async function readRastersZstd(tiff, image, opts) {
   return result;
 }
 
+// Render a single COG at the current map viewport.
+//
+// 1. Computes the intersection of the viewport and the COG bounding box
+//    (both in NZTM2000), skipping if there is no overlap.
+// 2. Determines the optimal read size — the lesser of screen pixels and
+//    native COG pixels for the visible area, to avoid over-fetching.
+// 3. Calls readRastersWithFallback() to fetch + decode tile data.
+// 4. Converts raster bands to RGBA via toRGBA() and draws to a canvas.
+// 5. Adds or updates a MapLibre 'image' source with the canvas data URL,
+//    positioned using the four corner coordinates of the visible window.
+//
+// The token mechanism detects stale renders: if the map moves while a
+// render is in flight, token !== cog.token and the result is discarded.
+//
+// Status transitions:
+//   rendering → done   (first successful render)
+//   rendering → error  (on exception)
+//   done → rendering   (re-render triggered by map move)
 async function renderOneCog(cog) {
   if (!cog) return;
   const token = ++cog.token;
@@ -1460,6 +1697,7 @@ async function renderOneCog(cog) {
       map.addSource(cog.sourceId, { type: 'image', url: dataUrl, coordinates: coords });
       map.addLayer({ id: cog.layerId, type: 'raster', source: cog.sourceId,
         paint: { 'raster-opacity': 0.9, 'raster-fade-duration': 150 } });
+      map.on('contextmenu', cog.layerId, window._onCogContextMenu);
     }
     // Mark done on first successful render only
     if (cog.status !== 'done') { cog.status = 'done'; _updateCogBar(); }
@@ -1469,12 +1707,98 @@ async function renderOneCog(cog) {
   }
 }
 
+// Re-render all active COGs. Called on map 'moveend' so overlays
+// update whenever the viewport changes (pan, zoom, rotate).
 function renderAllCogs() {
   _cogMap.forEach(entry => renderOneCog(entry));
 }
 
 map.on('moveend', renderAllCogs);
+
+// ── COG right-click context menu ──────────────────────────────────
+const _ctxMenu   = document.getElementById('cog-context-menu');
+const _ctxName   = document.getElementById('ctx-layer-name');
+const _ctxDlLink = document.getElementById('ctx-download-link');
+
+// Show the right-click context menu for a COG overlay.
+// Positions the menu near the cursor, nudging inward to stay on screen.
+// The download action uses blobDownload() to force the correct filename.
+function _showCogContextMenu(cogEntry, clientX, clientY) {
+  _ctxName.textContent = cogEntry.label;
+  _ctxDlLink.href      = '#';
+  _ctxDlLink.onclick   = e => { e.preventDefault(); blobDownload(cogEntry.url, _cogDownloadName(cogEntry)); };
+  // Position near cursor, nudge inward if it would overflow
+  _ctxMenu.style.left = '0px'; _ctxMenu.style.top = '0px';
+  _ctxMenu.classList.add('visible');
+  const mw = _ctxMenu.offsetWidth, mh = _ctxMenu.offsetHeight;
+  _ctxMenu.style.left = (clientX + mw > window.innerWidth  ? clientX - mw : clientX) + 'px';
+  _ctxMenu.style.top  = (clientY + mh > window.innerHeight ? clientY - mh : clientY) + 'px';
+}
+
+function _dismissCtxMenu() { _ctxMenu.classList.remove('visible'); }
+
+// MapLibre layer-level contextmenu handler.
+// Registered via map.on('contextmenu', layerId, ...) when the layer is
+// first created in renderOneCog(). Resolves the clicked layer back to
+// its _cogMap entry and delegates to _showCogContextMenu().
+window._onCogContextMenu = function(e) {
+  const layerId = e.features && e.features[0] && e.features[0].layer && e.features[0].layer.id;
+  const cogEntry = [..._cogMap.values()].find(v => v.layerId === layerId);
+  if (!cogEntry) return;
+  e.originalEvent.preventDefault();
+  _showCogContextMenu(cogEntry, e.originalEvent.clientX, e.originalEvent.clientY);
+};
+
+// Canvas-level contextmenu fallback.
+// MapLibre does not always bubble contextmenu events through image sources.
+// This handler fires on the raw canvas element and does a bounding-box
+// hit test against all active COG entries to find the right one.
+map.getCanvas().addEventListener('contextmenu', e => {
+  if (_ctxMenu.classList.contains('visible')) return; // already handled by layer event
+  // Find which COG (if any) contains this point
+  const pt = map.unproject([e.clientX - map.getCanvas().getBoundingClientRect().left,
+                             e.clientY - map.getCanvas().getBoundingClientRect().top]);
+  const [lng, lat] = [pt.lng, pt.lat];
+  const hit = [..._cogMap.values()].find(v => {
+    const [minLng, maxLng] = [Math.min(v.swLng,v.nwLng), Math.max(v.neLng,v.seLng)];
+    const [minLat, maxLat] = [Math.min(v.swLat,v.seLat), Math.max(v.nwLat,v.neLat)];
+    return lng >= minLng && lng <= maxLng && lat >= minLat && lat <= maxLat;
+  });
+  if (hit) { e.preventDefault(); _showCogContextMenu(hit, e.clientX, e.clientY); }
+});
+
+document.addEventListener('click', _dismissCtxMenu);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') _dismissCtxMenu(); });
+map.on('movestart', _dismissCtxMenu);
+map.on('zoomstart', _dismissCtxMenu);
+
 document.getElementById('cog-overlay-close').onclick = () => removeCogOverlay();
+
+// Download all COG sheets that have rendered successfully (green tick).
+// Each file is fetched and saved separately via blobDownload(), with a
+// short stagger between requests to avoid overwhelming the browser/network.
+async function downloadAllCogs() {
+  const btn = document.getElementById('cog-bar-dl-all');
+  const done = [..._cogMap.values()].filter(e => e.status === 'done');
+  if (!done.length) { debugInfo('No rendered sheets to download'); return; }
+
+  btn.disabled = true;
+  btn.textContent = '↓ 0/' + done.length;
+
+  for (let i = 0; i < done.length; i++) {
+    const entry = done[i];
+    btn.textContent = '↓ ' + (i + 1) + '/' + done.length;
+    await blobDownload(entry.url, _cogDownloadName(entry));
+    // Small gap between downloads so the browser can process each blob URL
+    if (i < done.length - 1) await new Promise(r => setTimeout(r, 400));
+  }
+
+  btn.disabled = false;
+  btn.textContent = '↓ all';
+  debugInfo('Batch download complete — ' + done.length + ' file(s)');
+}
+
+document.getElementById('cog-bar-dl-all').onclick = downloadAllCogs;
 </script>
 </body>
 </html>
