@@ -102,7 +102,7 @@ NZ imagery TIFF compression tags **frequently misreport the actual tile encoding
 
 **NIR ZSTD specifics:** `INTERLEAVE=PIXEL` + `PREDICTOR=2` — undo step must be `nBands × bytesPerSample`. `BitsPerSample` is returned by geotiff.js as a plain object `{0:8, 1:8, ...}` requiring `Object.values()` to parse. Band arrays must be `Uint8Array` for 8-bit data, not `Float32Array`.
 
-See [`nz_imagery_tiff_compression_notes.md`](nz_imagery_tiff_compression_notes.md) for full technical detail.
+See [`COMPRESSION-TIFF-TAG-ISSUES.md`](https://github.com/MutantKiwi/aerial-image-viewer/blob/main/COMPRESSION-TIFF-TAG-ISSUES.md) for full technical detail.
 
 ---
 
