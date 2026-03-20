@@ -16,121 +16,31 @@
 
 <!-- GeoTIFF for COG streaming — WEBP tiles decoded natively via Pool -->
 <script src="https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js"></script>
-<!-- ═══════════════════════════════════════════════════════════════
-     @esri/lerc — LERC / LERC+Zstd decompressor (loaded on demand)
-     Only needed for COGs with TIFF compression tag 50000 or 50001.
-     Tries ESRI's own CDN first (most reliable), then npm CDN fallbacks.
-     Resolves window._lercReady with the library instance once ready.
-     ═══════════════════════════════════════════════════════════════ -->
+<!-- LERC decoder — for any genuine LERC tiles -->
 <script>
 window._lercReady = new Promise((resolve, reject) => {
-  // Try multiple CDNs and multiple versions.
-  // v4 changed its UMD global name — we probe every known variant.
-  const candidates = [
-    // Self-hosted on S3 — tried first, avoids external CDN blocks
-    'https://imagery.mutant.kiwi/LercDecode.js',
-    // ESRI's own CDN (no version pin — always latest stable)
-    'https://js.arcgis.com/lerc/lerc.min.js',
-    // v4.x on jsdelivr
-    'https://cdn.jsdelivr.net/npm/@esri/lerc@4.0.1/dist/browser/lerc.min.js',
-    // v3.x on jsdelivr — different global name (LercDecode)
-    'https://cdn.jsdelivr.net/npm/@esri/lerc@3.0.0/dist/LercDecode.min.js',
-    // unpkg fallbacks
-    'https://unpkg.com/@esri/lerc@4.0.1/dist/browser/lerc.min.js',
-    'https://unpkg.com/@esri/lerc@3.0.0/dist/LercDecode.min.js',
-    // lerc package (no @esri scope) — different package, same API
-    'https://unpkg.com/lerc@3.0.0/LercDecode.js',
-  ];
-  let i = 0;
-
-  // Probe every plausible global the library might set after loading
-  function detectLib() {
-    // v4 UMD global variants
-    const candidates = [
-      window.Lerc,
-      window.LercDecode,
-      window.lerc,
-      // v4 may nest under esri namespace
-      window.esri && window.esri.lerc,
-      // Some builds export as module-style default
-      window['@esri/lerc'],
-    ].filter(Boolean);
-
-    for (const lib of candidates) {
-      // Need a decode() function — either directly or on a nested object
-      if (typeof lib.decode === 'function') return lib;
-      if (lib.default && typeof lib.default.decode === 'function') return lib.default;
-    }
-    return null;
-  }
-
-  function tryNext() {
-    if (i >= candidates.length) {
-      reject(new Error('All LERC CDNs failed — globals tried: Lerc, LercDecode, lerc, esri.lerc'));
-      return;
-    }
-    const url = candidates[i++];
-    const s = document.createElement('script');
-    s.src = url;
-    s.onload = () => {
-      const lib = detectLib();
-      if (!lib) {
-        // Loaded but no usable global found — log what IS on window for debugging
-        const lercKeys = Object.keys(window).filter(k => /lerc/i.test(k));
-        console.warn('[LERC] Script loaded but no decode() found. Window keys matching /lerc/:', lercKeys.join(', ') || 'none');
-        tryNext();
-        return;
-      }
-      window.Lerc = lib; // normalise to window.Lerc for readRastersLerc()
-      // v4 requires an async load() call to initialise the WASM module
-      (typeof lib.load === 'function' ? lib.load() : Promise.resolve())
-        .then(() => resolve(lib))
-        .catch(err => { console.warn('[LERC] load() failed:', err); tryNext(); });
-    };
-    s.onerror = () => { console.warn('[LERC] Failed to load:', url); tryNext(); };
-    document.head.appendChild(s);
-  }
-  tryNext();
+  const s = document.createElement('script');
+  s.src = 'https://imagery.mutant.kiwi/LercDecode.js';
+  s.onload = () => {
+    const lib = window.LercDecode || window.Lerc || window.lerc;
+    if (lib && typeof lib.decode === 'function') { window.Lerc = lib; resolve(lib); }
+    else reject(new Error('LercDecode loaded but no decode() found'));
+  };
+  s.onerror = () => reject(new Error('Failed to load LercDecode.js'));
+  document.head.appendChild(s);
 });
 </script>
-<!-- ═══════════════════════════════════════════════════════════════
-     Zstd decompressor — for COGs with TIFF compression tag 50003.
-     zstd-codec is tried first (matches geotiff.js 2.1.x internals),
-     then fzstd (compatible with geotiff.js 2.2+).
-     Resolves window._zstdReady with the decompressor instance.
-     ═══════════════════════════════════════════════════════════════ -->
+<!-- ZSTD decoder — near-infrared imagery uses ZSTD+PREDICTOR=2 -->
 <script>
 window._zstdReady = new Promise((resolve, reject) => {
-  // Try zstd-codec first (matches geotiff.js 2.1.x internal check)
-  // then fzstd (geotiff.js 2.2+), then reject
-  const candidates = [
-    { url: 'https://cdn.jsdelivr.net/npm/zstd-codec@0.1.5/dist/zstd-codec.min.js',
-      check: () => window.ZstdCodec,
-      init: () => new Promise(res => window.ZstdCodec.run(zstd => res(zstd))) },
-    { url: 'https://unpkg.com/zstd-codec@0.1.5/dist/zstd-codec.min.js',
-      check: () => window.ZstdCodec,
-      init: () => new Promise(res => window.ZstdCodec.run(zstd => res(zstd))) },
-    { url: 'https://cdn.jsdelivr.net/npm/fzstd@0.1.1/umd/index.js',
-      check: () => window.fzstd && window.fzstd.decompress,
-      init: () => Promise.resolve(window.fzstd) },
-    { url: 'https://unpkg.com/fzstd@0.1.1/umd/index.js',
-      check: () => window.fzstd && window.fzstd.decompress,
-      init: () => Promise.resolve(window.fzstd) },
-  ];
-  let i = 0;
-  function tryNext() {
-    if (i >= candidates.length) { reject(new Error('All Zstd CDNs failed')); return; }
-    const c = candidates[i++];
-    const s = document.createElement('script');
-    s.src = c.url;
-    s.onload = () => {
-      if (!c.check()) { tryNext(); return; }
-      c.init().then(resolve).catch(tryNext);
-    };
-    s.onerror = tryNext;
-    document.head.appendChild(s);
-  }
-  tryNext();
+  const s = document.createElement('script');
+  s.src = 'https://cdn.jsdelivr.net/npm/fzstd@0.1.1/umd/index.js';
+  s.onload = () => {
+    if (window.fzstd && window.fzstd.decompress) resolve(window.fzstd);
+    else reject(new Error('fzstd loaded but decompress() not found'));
+  };
+  s.onerror = () => reject(new Error('Failed to load fzstd'));
+  document.head.appendChild(s);
 });
 </script>
 
@@ -138,7 +48,7 @@ window._zstdReady = new Promise((resolve, reject) => {
 <script src="https://browser.sentry-cdn.com/7.99.0/bundle.min.js" crossorigin="anonymous"></script>
 
 <!-- Google Fonts -->
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>/* System fonts — no external font load */ </style>
 
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -156,7 +66,7 @@ window._zstdReady = new Promise((resolve, reject) => {
     --panel-w:  420px;
   }
 
-  html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: 'Syne', sans-serif; }
+  html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
 
   #map { position: fixed; inset: 0; cursor: crosshair; }
 
@@ -168,11 +78,11 @@ window._zstdReady = new Promise((resolve, reject) => {
     pointer-events: none;
   }
   #header h1 { font-size: 17px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent); }
-  #header .sub { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--muted); letter-spacing: 0.1em; }
+  #header .sub { font-family: 'Consolas', 'SF Mono', monospace; font-size: 12px; color: var(--muted); letter-spacing: 0.1em; }
 
   #coords-bar {
-    position: fixed; bottom: 24px; left: 24px; z-index: 10;
-    font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);
+    position: fixed; bottom: 24px; left: 220px; z-index: 10;
+    font-family: 'Consolas', 'SF Mono', monospace; font-size: 11px; color: var(--muted);
     background: rgba(10,12,15,0.85); border: 1px solid var(--border);
     padding: 6px 12px; border-radius: 4px; backdrop-filter: blur(8px); transition: color 0.2s;
   }
@@ -212,9 +122,9 @@ window._zstdReady = new Promise((resolve, reject) => {
     display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
   }
   #panel-title { font-size: 11px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
-  #panel-coords { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted); }
+  #panel-coords { font-family: 'Consolas', 'SF Mono', monospace; font-size: 11px; color: var(--muted); }
   #panel-count {
-    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    font-family: 'Consolas', 'SF Mono', monospace; font-size: 11px;
     background: var(--surface2); border: 1px solid var(--border);
     padding: 3px 8px; border-radius: 3px; white-space: nowrap; flex-shrink: 0; color: var(--text);
   }
@@ -233,6 +143,32 @@ window._zstdReady = new Promise((resolve, reject) => {
 
   #results { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; display: block; }
   #results .result-card { margin-bottom: 8px; }
+
+  .region-group { margin-bottom: 4px; }
+  .region-group-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 4px 6px;
+    cursor: pointer; user-select: none;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    margin-bottom: 8px;
+  }
+  .region-group-header:hover { border-bottom-color: rgba(255,255,255,0.2); }
+  .region-group-name {
+    flex: 1; font-size: 10px; font-weight: 800;
+    letter-spacing: 0.12em; color: var(--accent2);
+  }
+  .region-group-count {
+    font-size: 10px; color: rgba(255,255,255,0.3);
+    font-family: 'Consolas', 'SF Mono', monospace;
+  }
+  .region-group-chevron {
+    color: rgba(255,255,255,0.3);
+    transition: transform 0.2s;
+    flex-shrink: 0;
+  }
+  .region-group.collapsed .region-group-chevron { transform: rotate(-90deg); }
+  .region-group.collapsed .region-group-body { display: none; }
+  .region-group-body { display: block; }
   #results::-webkit-scrollbar { width: 4px; }
   #results::-webkit-scrollbar-track { background: transparent; }
   #results::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
@@ -261,7 +197,7 @@ window._zstdReady = new Promise((resolve, reject) => {
   }
   .card-info { flex: 1; min-width: 0; }
   .card-layer { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .card-feat { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card-feat { font-family: 'Consolas', 'SF Mono', monospace; font-size: 10px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .card-chevron { color: var(--muted); transition: transform 0.25s; flex-shrink: 0; }
   .result-card.expanded .card-chevron { transform: rotate(180deg); }
 
@@ -272,20 +208,20 @@ window._zstdReady = new Promise((resolve, reject) => {
   .meta-table tr { border-bottom: 1px solid var(--border); }
   .meta-table tr:last-child { border-bottom: none; }
   .meta-table td { padding: 5px 0; font-size: 11px; vertical-align: top; }
-  .meta-table td:first-child { color: var(--muted); font-family: 'JetBrains Mono', monospace; width: 38%; padding-right: 8px; }
+  .meta-table td:first-child { color: var(--muted); font-family: 'Consolas', 'SF Mono', monospace; width: 38%; padding-right: 8px; }
 
-  .cog-error { font-size: 10px; color: var(--danger); font-family: 'JetBrains Mono', monospace; padding: 16px; text-align: center; }    border: 1px solid var(--border); border-radius: 4px; overflow: hidden;
+  .cog-error { font-size: 10px; color: var(--danger); font-family: 'Consolas', 'SF Mono', monospace; padding: 16px; text-align: center; }    border: 1px solid var(--border); border-radius: 4px; overflow: hidden;
     margin-bottom: 12px; position: relative; background: var(--bg);
     min-height: 120px; display: flex; align-items: center; justify-content: center;
   }
-  .cog-error { font-size: 10px; color: var(--danger); font-family: 'JetBrains Mono', monospace; padding: 16px; text-align: center; }
+  .cog-error { font-size: 10px; color: var(--danger); font-family: 'Consolas', 'SF Mono', monospace; padding: 16px; text-align: center; }
 
   .card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
   .btn {
     display: inline-flex; align-items: center; gap: 5px;
     padding: 6px 12px; border-radius: 4px; font-size: 11px; font-weight: 600;
     cursor: pointer; text-decoration: none; transition: all 0.15s;
-    font-family: 'Syne', sans-serif; letter-spacing: 0.03em; border: none;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; letter-spacing: 0.03em; border: none;
   }
   .btn-primary { background: var(--accent); color: #0a0c0f; }
   .btn-primary:hover { filter: brightness(1.1); }
@@ -303,11 +239,12 @@ window._zstdReady = new Promise((resolve, reject) => {
   @keyframes pulse-ring { 0% { transform: scale(1); opacity: 1; } 100% { transform: scale(3); opacity: 0; } }
 
   #instructions {
-    position: fixed; bottom: 64px; left: 24px; z-index: 10;
+    position: fixed; top: 155px; left: 24px; z-index: 10;
     background: rgba(10,12,15,0.85); border: 1px solid var(--border);
-    padding: 10px 14px; border-radius: 5px; backdrop-filter: blur(8px);
+    padding: 8px 14px; border-radius: 5px; backdrop-filter: blur(8px);
     font-size: 11px; color: var(--muted); line-height: 1.7;
     pointer-events: none; transition: opacity 0.4s;
+    width: 340px;
   }
   #instructions.hidden { opacity: 0; }
   #instructions span { color: var(--text); }
@@ -328,9 +265,9 @@ window._zstdReady = new Promise((resolve, reject) => {
     border: 1px solid rgba(71,200,255,0.25); border-radius: 8px;
     backdrop-filter: blur(12px);
     display: none; flex-direction: column;
-    font-family: 'JetBrains Mono', monospace;
-    width: 540px; max-width: calc(100vw - 32px);
-    max-height: 220px;
+    font-family: 'Consolas', 'SF Mono', monospace;
+    width: 720px; max-width: calc(100vw - 32px);
+    max-height: 260px;
     box-shadow: 0 4px 32px rgba(0,0,0,0.6);
   }
   #cog-overlay-bar.visible { display: flex; }
@@ -343,7 +280,7 @@ window._zstdReady = new Promise((resolve, reject) => {
   #cog-bar-count { color: var(--muted); }
   #cog-overlay-close, #cog-bar-dl-all {
     background: transparent; border: none; cursor: pointer;
-    font: 10px 'JetBrains Mono', monospace; padding: 2px 6px; border-radius: 3px;
+    font: 10px 'Consolas', 'SF Mono', monospace; padding: 2px 6px; border-radius: 3px;
     transition: color 0.15s;
   }
   #cog-overlay-close { color: var(--muted); }
@@ -382,7 +319,15 @@ window._zstdReady = new Promise((resolve, reject) => {
     border-top-color: var(--accent2); border-radius: 50%;
     animation: spin 0.7s linear infinite;
   }
-  .cog-bar-row-status .row-tick { color: #3ecf6a; font-size: 12px; line-height: 1; }
+  .cog-bar-row-status .row-tick { color: #3ecf6a; font-size: 12px; line-height: 1; cursor: pointer; }
+  .cog-bar-row-status .row-tick.hidden { color: rgba(255,255,255,0.2); }
+  #cog-bar-toggle-all {
+    background: transparent; border: none; color: var(--accent2); cursor: pointer;
+    font: 10px 'Consolas', 'SF Mono', monospace; padding: 2px 6px; border-radius: 3px;
+    transition: color 0.15s;
+  }
+  #cog-bar-toggle-all:hover { color: #fff; }
+  #cog-bar-toggle-all.all-off { color: rgba(255,255,255,0.3); }
   .cog-bar-row-status .row-err  { color: #ff6b47; font-size: 12px; line-height: 1; }
   .cog-bar-row-remove {
     background: transparent; border: none; color: var(--muted); cursor: pointer;
@@ -396,6 +341,17 @@ window._zstdReady = new Promise((resolve, reject) => {
     text-decoration: none; transition: color 0.15s;
   }
   .cog-bar-row-dl:hover { color: var(--accent2); }
+  .cog-bar-row-opacity {
+    display: flex; align-items: center; gap: 5px; flex-shrink: 0;
+  }
+  .cog-bar-row-opacity-label {
+    font-size: 9px; color: var(--muted); width: 26px; text-align: right; flex-shrink: 0;
+  }
+  .cog-bar-opacity-slider {
+    width: 72px; cursor: pointer;
+    accent-color: var(--accent2);
+    height: 3px;
+  }
 
   * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 
@@ -404,6 +360,38 @@ window._zstdReady = new Promise((resolve, reject) => {
     position: fixed; top: 64px; left: 24px; z-index: 15;
     width: 340px;
   }
+  #basemap-select-wrap {
+    position: fixed; top: 110px; left: 24px; z-index: 15;
+    width: 340px;
+  }
+  #basemap-select {
+    width: 100%;
+    background: rgba(10,12,15,0.92); border: 1px solid var(--border);
+    border-radius: 5px; backdrop-filter: blur(10px);
+    color: var(--text); font-size: 12px;
+    padding: 8px 12px; cursor: pointer;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    appearance: none; -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%23a0aec0' stroke-width='2' viewBox='0 0 24 24'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+  }
+  #basemap-select:focus { outline: none; border-color: var(--accent2); }
+  #basemap-select option { background: #0f1114; color: var(--text); }
+
+  /* Custom compass */
+  #compass {
+    position: fixed; top: 16px; right: 56px; z-index: 15;
+    width: 38px; height: 38px; cursor: pointer;
+    background: rgba(10,12,15,0.92); border: 1px solid var(--border);
+    border-radius: 50%; backdrop-filter: blur(10px);
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color 0.2s;
+  }
+  #compass:hover { border-color: var(--accent2); }
+  #compass svg { transition: transform 0.1s; }
+
+
   #geocoder-input-wrap {
     display: flex; align-items: center; gap: 10px;
     background: rgba(10,12,15,0.92); border: 1px solid var(--border);
@@ -418,7 +406,7 @@ window._zstdReady = new Promise((resolve, reject) => {
   }
   #geocoder-input {
     flex: 1; background: transparent; border: none; outline: none;
-    font-family: 'JetBrains Mono', monospace; font-size: 13px;
+    font-family: 'Consolas', 'SF Mono', monospace; font-size: 13px;
     color: var(--text); padding: 10px 0;
     placeholder-color: var(--muted);
   }
@@ -457,13 +445,13 @@ window._zstdReady = new Promise((resolve, reject) => {
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .geocoder-item-detail {
-    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    font-family: 'Consolas', 'SF Mono', monospace; font-size: 11px;
     color: var(--muted); margin-top: 2px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .geocoder-no-results {
     padding: 12px 14px; font-size: 12px; color: var(--muted);
-    font-family: 'JetBrains Mono', monospace; text-align: center;
+    font-family: 'Consolas', 'SF Mono', monospace; text-align: center;
   }
 
   /* ── COG right-click context menu ── */
@@ -472,7 +460,7 @@ window._zstdReady = new Promise((resolve, reject) => {
     background: rgba(8,10,13,0.97); border: 1px solid rgba(71,200,255,0.25);
     border-radius: 6px; backdrop-filter: blur(12px);
     box-shadow: 0 4px 24px rgba(0,0,0,0.6);
-    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    font-family: 'Consolas', 'SF Mono', monospace; font-size: 11px;
     min-width: 200px; overflow: hidden;
   }
   #cog-context-menu.visible { display: block; }
@@ -546,6 +534,22 @@ window._zstdReady = new Promise((resolve, reject) => {
   <div id="geocoder-results"></div>
 </div>
 
+<div id="basemap-select-wrap">
+  <select id="basemap-select">
+    <option value="topo">NZ Topo Gridless</option>
+    <option value="topolite" selected>NZ Topo Lite</option>
+    <option value="aerial">NZ Aerial Imagery</option>
+  </select>
+</div>
+
+<div id="compass" title="Click to reset bearing">
+  <svg id="compass-arrow" width="20" height="20" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+    <polygon points="10,2 13,10 10,8 7,10" fill="#e8ff47"/>
+    <polygon points="10,18 13,10 10,12 7,10" fill="rgba(255,255,255,0.25)"/>
+    <text x="10" y="17.5" text-anchor="middle" font-size="5.5" font-weight="800" fill="#e8ff47" font-family="monospace" letter-spacing="0">N</text>
+  </svg>
+</div>
+
 <div id="coords-bar">— , —</div>
 
 <div id="instructions">
@@ -566,6 +570,7 @@ window._zstdReady = new Promise((resolve, reject) => {
 
 <div id="cog-overlay-bar">
   <div id="cog-bar-header">
+    <button id="cog-bar-toggle-all" title="Toggle all layers on/off">◉ all on</button>
     <span id="cog-bar-header-title">SHEETS ON MAP</span>
     <span id="cog-bar-count"></span>
     <button id="cog-bar-dl-all" title="Download all rendered sheets">↓ all</button>
@@ -601,31 +606,13 @@ window._zstdReady = new Promise((resolve, reject) => {
 // This gives immediate visibility into which compression paths are
 // available and confirms the page is ready to render COGs.
 document.addEventListener('DOMContentLoaded', () => {
-  debugInfo('GeoTIFF Pool ready — WEBP/LZW/Deflate/JPEG native; LERC+ZSTD via fallback');
+  debugInfo('GeoTIFF Pool ready — WEBP/LZW/Deflate/JPEG native');
 
   // When a decompression library becomes available, automatically re-render
   // any COGs that previously failed because the library wasn't ready yet.
   // This handles the race condition where a COG is opened before the CDN
   // script has finished loading.
-  function retryErroredCogs(libName) {
-    if (typeof _cogMap === 'undefined') return;
-    const errored = [..._cogMap.values()].filter(e => e.status === 'error');
-    if (errored.length) {
-      debugInfo(libName + ' ready — retrying ' + errored.length + ' failed COG(s)…');
-      errored.forEach(e => { e.status = 'rendering'; renderOneCog(e); });
-      _updateCogBar();
-    } else {
-      debugInfo(libName + ' ready ✓');
-    }
-  }
 
-  window._lercReady
-    .then(() => retryErroredCogs('@esri/lerc'))
-    .catch(err => debugInfo('@esri/lerc unavailable (' + err.message + ')'));
-
-  window._zstdReady
-    .then(() => retryErroredCogs('Zstd'))
-    .catch(err => debugInfo('Zstd unavailable (' + err.message + ')'));
 });
 // ═══════════════════════════════════════════════════════════════════
 // SENTRY / BUGSINK ERROR TRACKING
@@ -676,7 +663,7 @@ const toWGS84 = (e, n)     => proj4('EPSG:2193', 'EPSG:4326', [e, n]);
 const MASTER_FGB = 'https://imagery.mutant.kiwi/all_imagery.fgb';
 
 const CONFIG = {
-  mapStyle: 'https://tiles.openfreemap.org/styles/dark',
+  mapStyle: `https://basemaps.linz.govt.nz/v1/styles/topolite-v2.json?api=c01km5nw6fvmeeebaxqf9grm0p4`,
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -693,12 +680,97 @@ const map = new maplibregl.Map({
 });
 
 map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-left');
+
+// ── Compass — rotates with map bearing, click to reset north ─────────────────
+map.on('rotate', () => {
+  const arrow = document.getElementById('compass-arrow');
+  if (arrow) arrow.style.transform = `rotate(${-map.getBearing()}deg)`;
+});
+document.getElementById('compass').addEventListener('click', () => {
+  map.easeTo({ bearing: 0, duration: 300 });
+});
 map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
 
-// Live coordinate display in bottom-left bar as the mouse moves.
+// ── Basemap definitions ───────────────────────────────────────────────────────
+const LINZ_KEY = 'c01km5nw6fvmeeebaxqf9grm0p4';
+const BASEMAPS = {
+  topo: {
+    label: 'NZ Topo Gridless',
+    style: `https://basemaps.linz.govt.nz/v1/tiles/topo-raster/WebMercatorQuad/style/topo-raster.json?api=c01km5nw6fvmeeebaxqf9grm0p4`,
+    type: 'raster',
+  },
+  topolite: {
+    label: 'NZ Topo Lite',
+    style: `https://basemaps.linz.govt.nz/v1/styles/topolite-v2.json?api=c01km5nw6fvmeeebaxqf9grm0p4`,
+    type: 'vector',
+  },
+  aerial: {
+    label: 'NZ Aerial Imagery',
+    style: {
+      version: 8,
+      sources: {
+        'linz-aerial': {
+          type: 'raster',
+          tiles: [`https://basemaps.linz.govt.nz/v1/tiles/aerial/WebMercatorQuad/{z}/{x}/{y}.webp?api=c01km5nw6fvmeeebaxqf9grm0p4`],
+          tileSize: 256,
+          attribution: '© 2024 Toitū Te Whenua Land Information New Zealand',
+          maxzoom: 22,
+        },
+      },
+      layers: [{ id: 'aerial', type: 'raster', source: 'linz-aerial' }],
+    },
+    type: 'raster-inline',
+  },
+};
+
+// ── Terrain (3D) ──────────────────────────────────────────────────────────────
+
+
+// Switch basemap while preserving all COG overlays and terrain
+async function setBasemap(key) {
+  const bm = BASEMAPS[key];
+  if (!bm) return;
+
+  // Snapshot COG layers before style swap
+  const cogSnapshot = [..._cogMap.values()].map(e => ({
+    sourceId: e.sourceId, layerId: e.layerId,
+    url: e.url,
+    visible: e.visible !== false,
+    opacity: e.opacity !== undefined ? e.opacity : 0.9,
+  }));
+  map.setStyle(bm.style);
+
+  // Re-add COG layers + terrain once new style loads
+  map.once('styledata', () => {
+    // Re-add COG image sources and layers
+    cogSnapshot.forEach(snap => {
+      try {
+        if (!map.getSource(snap.sourceId)) {
+          // Rebuild a minimal image source — actual image re-renders on next moveend
+          map.addSource(snap.sourceId, { type: 'image', url: '', coordinates: [[0,0],[0,0],[0,0],[0,0]] });
+        }
+        if (!map.getLayer(snap.layerId)) {
+          map.addLayer({ id: snap.layerId, type: 'raster', source: snap.sourceId,
+            layout: { visibility: snap.visible ? 'visible' : 'none' },
+            paint: { 'raster-opacity': snap.opacity, 'raster-fade-duration': 150 } });
+        }
+      } catch(e) { /* ignore */ }
+    });
+
+    // Trigger re-render of all COGs at new viewport
+    setTimeout(() => renderAllCogs(), 200);
+  });
+}
+
+document.getElementById('basemap-select').addEventListener('change', e => {
+  setBasemap(e.target.value);
+});
+
+// Live coordinate display — shows NZTM (EPSG:2193) as mouse moves.
 map.on('mousemove', e => {
+  const [E, N] = toNZTM(e.lngLat.lng, e.lngLat.lat);
   document.getElementById('coords-bar').textContent =
-    `${e.lngLat.lat.toFixed(6)}, ${e.lngLat.lng.toFixed(6)}`;
+    `E ${Math.round(E)}  N ${Math.round(N)}`;
 });
 
 // Places an animated pulse marker at the last-clicked map position.
@@ -1051,7 +1123,55 @@ map.on('click', async e => {
   countEl.textContent = total;
 
   // Show limit slider when there are more than 10 results
-  features.forEach((f, i) => appendCard(f, i + 1));
+  // ── Group by region ───────────────────────────────────────────────
+  // Satellite imagery (region=new-zealand + title contains Satellite) → own group at bottom.
+  // All other features grouped by region, alphabetical, aerial imagery label.
+  const groups = new Map();
+  for (const f of features) {
+    const r     = (f.properties.region || 'new-zealand').toLowerCase();
+    const title = (f.properties.title || '').toLowerCase();
+    const key   = (r === 'new-zealand' && title.includes('satellite')) ? '__satellite__' : r;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(f);
+  }
+
+  // Sort: regional groups alphabetical first, satellite last
+  const sorted = [...groups.entries()].sort(([a], [b]) => {
+    if (a === '__satellite__') return 1;
+    if (b === '__satellite__') return -1;
+    return a.localeCompare(b);
+  });
+
+  function groupLabel(key, regionFeatures) {
+    if (key === '__satellite__') return 'NEW ZEALAND SATELLITE IMAGERY';
+    const name = key.replace(/-/g, ' ').toUpperCase();
+    return name + ' AERIAL IMAGERY';
+  }
+
+  let cardIndex = 1;
+  for (const [key, regionFeatures] of sorted) {
+    const displayName = groupLabel(key, regionFeatures);
+    const group = document.createElement('div');
+    group.className = 'region-group';
+
+    const header = document.createElement('div');
+    header.className = 'region-group-header';
+    header.innerHTML = `
+      <span class="region-group-name">${escHtml(displayName)}</span>
+      <span class="region-group-count">${regionFeatures.length}</span>
+      <svg class="region-group-chevron" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>`;
+    header.addEventListener('click', () => group.classList.toggle('collapsed'));
+
+    const body = document.createElement('div');
+    body.className = 'region-group-body';
+    group.appendChild(header);
+    group.appendChild(body);
+    resultsEl.appendChild(group);
+
+    for (const f of regionFeatures) {
+      appendCard(f, cardIndex++, body);
+    }
+  }
   const found = total;
 
   progressEl.style.width = '100%';
@@ -1085,12 +1205,15 @@ map.on('click', async e => {
 //
 // @param {Feature} feature - GeoJSON feature from master FGB
 // @param {number}  index   - 1-based display index
-function appendCard(feature, index) {
+function appendCard(feature, index, container) {
+  const target = container || resultsEl;
   const props    = feature.properties || {};
   const imageUrl = props.asset_url_image || '';
 
   // Label shown in the card header — title is most readable
   const label    = props.title || props.title_unicode || 'Unknown series';
+  const isNIR    = /near.?infrared/i.test(label);
+  const indexBg  = isNIR ? '#e84070' : 'var(--accent)';
 
   // Metadata rows shown in the expanded card body
   const SHOW_KEYS = ['region', 'year', 'asset_id', 'title_unicode'];
@@ -1108,7 +1231,7 @@ function appendCard(feature, index) {
 
   card.innerHTML = `
     <div class="card-header">
-      <div class="card-index">${index}</div>
+      <div class="card-index" style="background:${indexBg}">${index}</div>
       <div class="card-info">
         <div class="card-layer">${escHtml(label)}</div>
         <div class="card-feat">${escHtml(props.asset_id || props.title_unicode || '')}</div>
@@ -1141,7 +1264,7 @@ function appendCard(feature, index) {
   card.addEventListener('mouseenter', () => showFootprint(feature, false));
   card.addEventListener('mouseleave', () => { if (!card.classList.contains('footprint-active')) clearFootprintIfHover(); });
 
-  resultsEl.appendChild(card);
+  target.appendChild(card);
 }
 
 
@@ -1149,39 +1272,45 @@ function appendCard(feature, index) {
 // suitable for ImageData / canvas rendering.
 // Handles grayscale (1 band), RGB (3 bands), and RGBA (4 bands).
 // Values > 255 are assumed to be 16-bit and are scaled by dividing by 256.
-function toRGBA(bands, w, h) {
+function toRGBA(bands, w, h, nirMode) {
   const n = w * h;
   const out = new Uint8ClampedArray(n * 4);
 
   // geotiff.js Pool decoding WEBP tiles may return a single interleaved
   // array of length w*h*3 (RGB) or w*h*4 (RGBA) instead of separate bands.
-  // Detect this case by checking if the first band is longer than w*h.
   if (bands.length === 1 && bands[0].length === n * 4) {
-    // Already interleaved RGBA
     const src = bands[0];
     for (let i = 0; i < n; i++) {
-      out[i*4]   = src[i*4];
-      out[i*4+1] = src[i*4+1];
-      out[i*4+2] = src[i*4+2];
-      out[i*4+3] = src[i*4+3];
+      out[i*4] = src[i*4]; out[i*4+1] = src[i*4+1];
+      out[i*4+2] = src[i*4+2]; out[i*4+3] = src[i*4+3];
     }
   } else if (bands.length === 1 && bands[0].length === n * 3) {
-    // Interleaved RGB
     const src = bands[0];
     for (let i = 0; i < n; i++) {
-      out[i*4]   = src[i*3];
-      out[i*4+1] = src[i*3+1];
-      out[i*4+2] = src[i*3+2];
-      out[i*4+3] = 255;
+      out[i*4] = src[i*3]; out[i*4+1] = src[i*3+1];
+      out[i*4+2] = src[i*3+2]; out[i*4+3] = 255;
     }
   } else if (bands.length === 1) {
-    // Grayscale
     for (let i = 0; i < n; i++) {
       const v = bands[0][i];
       out[i*4] = v; out[i*4+1] = v; out[i*4+2] = v; out[i*4+3] = 255;
     }
+  } else if (nirMode && bands.length >= 4) {
+    // CIR (Colour Infrared) false-colour composite:
+    // Display R = Band 4 (NIR), Display G = Band 1 (Red), Display B = Band 2 (Green)
+    // Band 5 = Alpha (use if present)
+    const nirBand = bands[3]; // Band 4 NIR
+    const redBand = bands[0]; // Band 1 Red
+    const grnBand = bands[1]; // Band 2 Green
+    const alpBand = bands[4] || null; // Band 5 Alpha (optional)
+    for (let i = 0; i < n; i++) {
+      out[i*4]   = normalise(nirBand[i]); // NIR → Red channel
+      out[i*4+1] = normalise(redBand[i]); // Red → Green channel
+      out[i*4+2] = normalise(grnBand[i]); // Green → Blue channel
+      out[i*4+3] = alpBand ? normalise(alpBand[i]) : 255;
+    }
   } else {
-    // Separate bands (standard path for LZW, Deflate, ZSTD, LERC)
+    // Standard RGB(A)
     for (let i = 0; i < n; i++) {
       out[i*4]   = normalise(bands[0][i]);
       out[i*4+1] = normalise(bands[1] ? bands[1][i] : 0);
@@ -1460,8 +1589,12 @@ async function blobDownload(url, filename) {
 // IDs are based on a slug of the filename so they are human-readable
 // in the MapLibre style inspector.
 function _cogIds(url) {
-  const slug = url.split('/').pop().replace(/\W/g,'_').slice(0,40);
-  return { sourceId: 'cog-' + slug + '-src', layerId: 'cog-' + slug + '-lyr' };
+  // Hash the full URL to guarantee uniqueness regardless of path structure.
+  // Using a simple djb2 hash — fast, no crypto needed.
+  let h = 5381;
+  for (let i = 0; i < url.length; i++) h = ((h << 5) + h) ^ url.charCodeAt(i);
+  const hash = (h >>> 0).toString(36); // unsigned 32-bit base36
+  return { sourceId: 'cog-' + hash + '-src', layerId: 'cog-' + hash + '-lyr' };
 }
 
 // Remove one COG overlay (by URL) or all overlays (no argument).
@@ -1472,6 +1605,7 @@ function removeCogOverlay(url) {
     const entry = _cogMap.get(url);
     if (!entry) return;
     entry.token = -1;
+    if (entry._blobUrl) URL.revokeObjectURL(entry._blobUrl);
     try { if (map.getLayer(entry.layerId))   map.removeLayer(entry.layerId);   } catch(e) {}
     try { if (map.getSource(entry.sourceId)) map.removeSource(entry.sourceId); } catch(e) {}
     _cogMap.delete(url);
@@ -1500,15 +1634,27 @@ function _updateCogBar() {
   bar.classList.add('visible');
   count.textContent = _cogMap.size + ' sheet' + (_cogMap.size !== 1 ? 's' : '');
 
-  list.innerHTML = [..._cogMap.entries()].map(([url, e]) => {
-    const statusHtml = e.status === 'done'  ? '<span class="row-tick">✓</span>'
-                     : e.status === 'error' ? '<span class="row-err">!</span>'
-                     : '<div class="row-spinner"></div>';
+  const entries = [..._cogMap.entries()];
+  list.innerHTML = entries.map(([url, e], idx) => {
+    const visible    = e.visible !== false;
+    const tickCls    = visible ? 'row-tick' : 'row-tick hidden';
+    const tickIcon   = visible ? '\u2713' : '\u25ef';
+    const statusHtml = e.status === 'done'
+      ? `<span class="${tickCls}" data-toggle-layer-id="${escHtml(e.layerId)}" title="Toggle layer">${tickIcon}</span>`
+      : e.status === 'error' ? '<span class="row-err">!</span>'
+      : '<div class="row-spinner"></div>';
+    const opacity = e.opacity !== undefined ? e.opacity : 0.9;
+    const opPct   = Math.round(opacity * 100);
     return `
-    <div class="cog-bar-row">
+    <div class="cog-bar-row" data-row-idx="${idx}">
       <span class="cog-bar-row-status">${statusHtml}</span>
       <span class="cog-bar-row-label" title="${escHtml(e.label)}">${escHtml(e.label)}</span>
       <span class="cog-bar-row-asset">${escHtml(e.assetId || '—')}</span>
+      <div class="cog-bar-row-opacity">
+        <input class="cog-opacity-slider" type="range" min="0" max="100" step="5"
+          value="${opPct}" data-layer-id="${escHtml(e.layerId)}" title="Opacity">
+        <span class="cog-bar-row-opacity-label">${opPct}%</span>
+      </div>
       <a class="cog-bar-row-dl" href="#" data-dl-url="${escHtml(url)}" data-dl-name="${escHtml(_cogDownloadName(e))}" title="Download GeoTIFF">↓</a>
       <button class="cog-bar-row-remove" data-remove-url="${escHtml(url)}">✕</button>
     </div>`;
@@ -1520,6 +1666,53 @@ function _updateCogBar() {
   list.querySelectorAll('[data-dl-url]').forEach(a => {
     a.addEventListener('click', e => { e.preventDefault(); blobDownload(a.dataset.dlUrl, a.dataset.dlName); });
   });
+  list.querySelectorAll('.cog-opacity-slider').forEach(slider => {
+    slider.addEventListener('input', () => {
+      const layerId = slider.dataset.layerId;
+      const opacity = parseInt(slider.value) / 100;
+      // Update the % label next to this slider
+      const labelEl = slider.nextElementSibling;
+      if (labelEl) labelEl.textContent = Math.round(opacity * 100) + '%';
+      // Find entry by layerId directly in _cogMap — no stale closure
+      for (const entry of _cogMap.values()) {
+        if (entry.layerId === layerId) {
+          entry.opacity = opacity;
+          if (map.getLayer(layerId)) {
+            map.setPaintProperty(layerId, 'raster-opacity', opacity);
+          }
+          break;
+        }
+      }
+    });
+  });
+
+  // ── Tick click — toggle individual layer visibility ──────────────
+  list.querySelectorAll('[data-toggle-layer-id]').forEach(tick => {
+    tick.addEventListener('click', () => {
+      const layerId = tick.dataset.toggleLayerId;
+      for (const entry of _cogMap.values()) {
+        if (entry.layerId === layerId) {
+          entry.visible = entry.visible === false ? true : false;
+          const vis = entry.visible ? 'visible' : 'none';
+          if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', vis);
+          _updateCogBar(); // redraw to reflect new state
+          _syncToggleAllBtn();
+          break;
+        }
+      }
+    });
+  });
+
+  _syncToggleAllBtn();
+}
+
+// Update the toggle-all button label/style based on current state
+function _syncToggleAllBtn() {
+  const btn = document.getElementById('cog-bar-toggle-all');
+  if (!btn) return;
+  const allOff = [..._cogMap.values()].every(e => e.visible === false);
+  btn.textContent = allOff ? '◯ all off' : '◉ all on';
+  btn.classList.toggle('all-off', allOff);
 }
 
 // Open a COG on the map. Fetches the TIFF header, stores the entry in
@@ -1561,6 +1754,8 @@ async function loadCogOnMap(url, label, assetId, titleUnicode) {
     const entry = { tiff, image, minE, minN, maxE, maxN, label, url,
                     assetId: assetId,
                     titleUnicode: titleUnicode,
+                    opacity: 0.9,
+                    visible: true,
                     sourceId, layerId, token: 0, status: 'rendering',
                     nwLng, nwLat, neLng, neLat, seLng, seLat, swLng, swLat };
     _cogMap.set(url, entry);
@@ -1594,303 +1789,217 @@ async function loadCogOnMap(url, label, assetId, titleUnicode) {
 // Other compression failures are re-thrown as fatal errors.
 async function readRastersWithFallback(tiff, image, opts) {
   const compression = image.fileDirectory && image.fileDirectory.Compression;
-  // All NZ imagery is WEBP despite some files reporting compression tag 50001.
-  // geotiff.js handles WEBP natively. Try with pool first, fall back without.
+
+  // Compression 50000/50001 — probe first tile to detect actual format.
+  // NZ imagery frequently lies: tag says LERC but tiles are WEBP or ZSTD.
+  if (compression === 50000 || compression === 50001) {
+    try {
+      const fd = image.fileDirectory;
+      const offsets    = Array.from(fd.TileOffsets  || fd.StripOffsets  || []);
+      const byteCounts = Array.from(fd.TileByteCounts || fd.StripByteCounts || []);
+      let firstOff = 0, firstBc = 0;
+      for (let i = 0; i < offsets.length; i++) { if (byteCounts[i] > 0) { firstOff = offsets[i]; firstBc = byteCounts[i]; break; } }
+      if (firstBc > 0) {
+        const probe  = await fetch(tiff._sourceUrl, { headers: { Range: 'bytes=' + firstOff + '-' + (firstOff + 3) } });
+        const hdr    = new Uint8Array(await probe.arrayBuffer());
+        const isWebp = hdr[0] === 0x52 && hdr[1] === 0x49 && hdr[2] === 0x46 && hdr[3] === 0x46;
+        const isZstd = hdr[0] === 0x28 && hdr[1] === 0xB5 && hdr[2] === 0x2F && hdr[3] === 0xFD;
+        if (isWebp) {
+          debugInfo('Comp 50000 — tiles are WEBP, using standard decoder');
+          return await image.readRasters({ ...opts });
+        }
+        if (isZstd) {
+          debugInfo('Comp 50000 — tiles are ZSTD, using ZSTD decoder');
+          const { pool: _p, ...safeOpts } = opts;
+          return await readRastersZstd(tiff, image, safeOpts);
+        }
+      }
+    } catch(probeErr) { /* probe failed, fall through to LERC */ }
+    debugInfo('LERC compression (' + compression + ') — using LERC decoder');
+    const { pool: _p, ...safeOpts } = opts;
+    return await readRastersLerc(tiff, image, safeOpts);
+  }
+
+  // Explicit ZSTD tag
+  if (compression === 50003) {
+    debugInfo('ZSTD compression — using ZSTD decoder');
+    const { pool: _p, ...safeOpts } = opts;
+    return await readRastersZstd(tiff, image, safeOpts);
+  }
+
+  // WEBP/LZW/Deflate/JPEG — try single-thread first (reliable), Pool as fallback.
   try {
-    return await image.readRasters({ ...opts, pool: cogPool });
+    return await image.readRasters({ ...opts });
   } catch (err) {
     try {
-      return await image.readRasters({ ...opts });
+      return await image.readRasters({ ...opts, pool: cogPool });
     } catch (err2) {
-      debugErr('readRasters failed (compression=' + compression + '): ' + err2.message.slice(0, 80));
+      debugErr('readRasters failed: ' + err2.message.slice(0, 80));
       throw err2;
     }
   }
 }
 
-// ─────────────────────────────────────────────────────────────────
-// LERC FALLBACK  (compression tags 50000 = LERC, 50001 = LERC+Zstd)
-//
-// geotiff.js cannot decode LERC natively. This function:
-//   1. Reads TileOffsets + TileByteCounts from the TIFF file directory
-//   2. Fetches each overlapping tile individually via HTTP Range requests
-//   3. Decodes with @esri/lerc (which handles both LERC and LERC+Zstd)
-//   4. Assembles the decoded tiles into a window-sized band array
-//   5. Resamples to the requested output dimensions
-// ─────────────────────────────────────────────────────────────────
-async function readRastersLerc(tiff, image, opts) {
-  let lerc;
-  try {
-    lerc = await window._lercReady;
-  } catch (e) {
-    throw new Error('LERC fallback: @esri/lerc not available — ' + e.message);
-  }
-
-  const fd   = image.fileDirectory;
-  const imgW = fd.ImageWidth,  imgH = fd.ImageLength;
-  const tw   = fd.TileWidth  || fd.ImageWidth;
-  const th   = fd.TileLength || fd.ImageLength;
-  const nTX  = Math.ceil(imgW / tw);
-  const nTY  = Math.ceil(imgH / th);
-
-  // Raw tile offsets and sizes from TIFF file directory
-  const rawOff = fd.TileOffsets  || fd.StripOffsets;
-  const rawBC  = fd.TileByteCounts || fd.StripByteCounts;
-  if (!rawOff || !rawBC) throw new Error('LERC fallback: no tile offset data in TIFF directory');
-  const offsets    = Array.from(rawOff);
-  const byteCounts = Array.from(rawBC);
-
-  // Determine output window (default = whole image)
-  const [winX0, winY0, winX1, winY1] = opts.window || [0, 0, imgW, imgH];
-  const outW = opts.width  || (winX1 - winX0);
-  const outH = opts.height || (winY1 - winY0);
-
-  // Which tiles overlap the window?
-  const txMin = Math.floor(winX0 / tw), txMax = Math.min(nTX - 1, Math.floor((winX1 - 1) / tw));
-  const tyMin = Math.floor(winY0 / th), tyMax = Math.min(nTY - 1, Math.floor((winY1 - 1) / th));
-
-  // Assemble a full-resolution canvas covering the window
-  const winW = winX1 - winX0, winH = winY1 - winY0;
-  let nBands = 0;
-  const tileData = [];
-
-  const sourceUrl = tiff._sourceUrl;
-  if (!sourceUrl) throw new Error('LERC fallback: tiff._sourceUrl not set');
-
-  // Verify lerc API before fetching any tiles
-  const hasDecodeImage = typeof lerc.decodeImage === 'function';
-  const hasDecode      = typeof lerc.decode === 'function';
-  if (!hasDecodeImage && !hasDecode) throw new Error('LERC: no decode() or decodeImage() on lerc object. Keys: ' + Object.keys(lerc).join(','));
-  debugInfo('LERC api — decode:' + hasDecode + ' decodeImage:' + hasDecodeImage);
-
-  for (let ty = tyMin; ty <= tyMax; ty++) {
-    for (let tx = txMin; tx <= txMax; tx++) {
-      const tIdx = ty * nTX + tx;
-      const off  = offsets[tIdx],  bc = byteCounts[tIdx];
-      if (!bc || bc === 0) continue;
-
-      const resp = await fetch(sourceUrl, { headers: { Range: 'bytes=' + off + '-' + (off + bc - 1) } });
-      if (!resp.ok) throw new Error('LERC tile fetch failed: HTTP ' + resp.status);
-      const ab = await resp.arrayBuffer();
-
-      let decoded;
-      try {
-        const bytes = new Uint8Array(ab);
-        // Check magic bytes — compression tag 50001 can lie.
-        // WEBP: 52 49 46 46 (RIFF)
-        // LERC2: 4c 65 72 63 32 (Lerc2)
-        // Zstd: 28 b5 2f fd
-        const isWebp  = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46;
-        const isZstd  = bytes[0] === 0x28 && bytes[1] === 0xB5 && bytes[2] === 0x2F && bytes[3] === 0xFD;
-        const isLerc2 = bytes[0] === 0x4C && bytes[1] === 0x65 && bytes[2] === 0x72 && bytes[3] === 0x63;
-
-        if (isWebp) {
-          // Tile is actually WEBP — decode via ImageBitmap
-          const blob = new Blob([bytes], { type: 'image/webp' });
-          const bitmap = await createImageBitmap(blob);
-          const canvas = document.createElement('canvas');
-          canvas.width = bitmap.width; canvas.height = bitmap.height;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(bitmap, 0, 0);
-          const imgData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
-          // Return as separate R/G/B bands to match expected shape
-          const n = bitmap.width * bitmap.height;
-          const r = new Uint8Array(n), g = new Uint8Array(n), b = new Uint8Array(n);
-          for (let i = 0; i < n; i++) {
-            r[i] = imgData.data[i*4]; g[i] = imgData.data[i*4+1]; b[i] = imgData.data[i*4+2];
-          }
-          decoded = { pixels: [r, g, b], width: bitmap.width, height: bitmap.height, bandCount: 3 };
-        } else if (isZstd) {
-          // Zstd-wrapped LERC — decompress first then decode
-          const zstd = await window._zstdReady;
-          let raw;
-          if (typeof zstd.decompress === 'function') {
-            raw = zstd.decompress(bytes);
-          } else {
-            raw = await new Promise((res, rej) => {
-              const chunks = [];
-              const s = new zstd.Streaming.Decompress();
-              s.ondata = d => chunks.push(d);
-              s.onend  = () => { const out = new Uint8Array(chunks.reduce((a,b) => a+b.length, 0)); let o=0; chunks.forEach(c => { out.set(c,o); o+=c.length; }); res(out); };
-              s.onerror = rej;
-              s.push(bytes, true);
-            });
-          }
-          decoded = lerc.decode(raw.buffer || raw);
-        } else {
-          // Pure LERC
-          decoded = lerc.decode(ab);
-        }
-      } catch(e) {
-        throw new Error('LERC decode failed on tile [' + tx + ',' + ty + ']: ' + e.message);
-      }
-
-      // Log the decoded shape on the first tile so we can see what we got
-      if (!nBands) {
-        nBands = decoded.bandCount || (decoded.pixels && decoded.pixels.length) || 1;
-        debugInfo('LERC decoded tile shape — bandCount:' + nBands + ' w:' + decoded.width + ' h:' + decoded.height + ' pixelsType:' + (decoded.pixels && decoded.pixels[0] && decoded.pixels[0].constructor.name));
-      }
-
-      tileData.push({ tx, ty, decoded });
-    }
-  }
-
-  if (!nBands) throw new Error('LERC fallback: no tiles decoded');
-
-  // Assemble tile pixels into window-sized band arrays
-  const bands = Array.from({ length: nBands }, () => new Float32Array(winW * winH));
-  for (const { tx, ty, decoded } of tileData) {
-    const px = decoded.pixels;
-    const tileActualW = decoded.width  || tw;
-    const tileActualH = decoded.height || th;
-    // Tile origin in image coords
-    const tOriginX = tx * tw, tOriginY = ty * th;
-    // Overlap with window
-    const ox0 = Math.max(tOriginX, winX0), oy0 = Math.max(tOriginY, winY0);
-    const ox1 = Math.min(tOriginX + tileActualW, winX1);
-    const oy1 = Math.min(tOriginY + tileActualH, winY1);
-    for (let b = 0; b < nBands; b++) {
-      const src = px[b] || px;
-      const dst = bands[b];
-      for (let y = oy0; y < oy1; y++) {
-        for (let x = ox0; x < ox1; x++) {
-          const si = (y - tOriginY) * tileActualW + (x - tOriginX);
-          const di = (y - winY0)    * winW         + (x - winX0);
-          dst[di] = src[si];
-        }
-      }
-    }
-  }
-
-  // Resample to output size if needed
-  const result = [];
-  for (let b = 0; b < nBands; b++) {
-    if (outW === winW && outH === winH) {
-      result.push(bands[b]);
-    } else {
-      const out = new Float32Array(outW * outH);
-      const sx = winW / outW, sy = winH / outH;
-      for (let y = 0; y < outH; y++) {
-        for (let x = 0; x < outW; x++) {
-          out[y * outW + x] = bands[b][Math.round(y * sy) * winW + Math.round(x * sx)];
-        }
-      }
-      result.push(out);
-    }
-  }
-  result.width  = outW;
-  result.height = outH;
-  return result;
-}
-
-// ─────────────────────────────────────────────────────────────────
-// ZSTD FALLBACK  (compression tag 50003, often with PREDICTOR=2)
-//
-// geotiff.js cannot decode native ZSTD. This function:
-//   1. Reads TileOffsets + TileByteCounts from the TIFF file directory
-//   2. Fetches each overlapping tile via HTTP Range requests
-//   3. Decompresses with ZstdCodec or fzstd (whichever loaded)
-//   4. Undoes PREDICTOR=2 horizontal differencing if present
-//      (each sample value is stored as a delta from its left neighbour;
-//       we reverse this by computing the cumulative sum per row)
-//   5. Assembles and resamples the output bands
-// ─────────────────────────────────────────────────────────────────
+// ZSTD tile fallback — for near-infrared imagery (COMPRESSION=ZSTD, PREDICTOR=2).
 async function readRastersZstd(tiff, image, opts) {
-  let zstdLib;
-  try {
-    zstdLib = await window._zstdReady;
-  } catch (e) {
-    throw new Error('ZSTD fallback: zstd library not available — ' + e.message);
-  }
-
-  // Decompress function — handles both ZstdCodec (zstd.Simple) and fzstd APIs
-  function zstdDecompress(buf) {
-    const u8 = new Uint8Array(buf instanceof ArrayBuffer ? buf : buf.buffer, buf.byteOffset || 0, buf.byteLength || buf.buffer.byteLength);
-    if (zstdLib.decompress) return zstdLib.decompress(u8); // fzstd
-    if (zstdLib.Simple)     return new zstdLib.Simple().decompress(u8); // ZstdCodec
-    throw new Error('Unknown Zstd library API');
-  }
-
+  const zstd = await window._zstdReady;
   const fd   = image.fileDirectory;
   const imgW = fd.ImageWidth, imgH = fd.ImageLength;
-  const tw   = fd.TileWidth  || fd.ImageWidth;
-  const th   = fd.TileLength || fd.ImageLength;
-  const nTX  = Math.ceil(imgW / tw);
-  const nTY  = Math.ceil(imgH / th);
-  const predictor   = fd.Predictor   || 1;
-  const samplesPerPixel = fd.SamplesPerPixel || 1;
-  const bitsPerSample   = Array.isArray(fd.BitsPerSample) ? fd.BitsPerSample[0] : (fd.BitsPerSample || 8);
-  const bytesPerSample  = bitsPerSample / 8;
-
-  const rawOff = fd.TileOffsets  || fd.StripOffsets;
-  const rawBC  = fd.TileByteCounts || fd.StripByteCounts;
-  if (!rawOff || !rawBC) throw new Error('ZSTD fallback: no tile offset data');
-  const offsets = Array.from(rawOff), byteCounts = Array.from(rawBC);
-
+  const tw   = fd.TileWidth  || imgW, th = fd.TileLength || imgH;
+  const nTX  = Math.ceil(imgW / tw),  nTY = Math.ceil(imgH / th);
+  const predictor      = fd.Predictor || 1;
+  const samplesPerPixel = fd.SamplesPerPixel || fd.samplesPerPixel || 1;
+  // BitsPerSample may be a real array, an array-like object {0:8,1:8,...}, or a scalar
+  const bpsRaw = fd.BitsPerSample || fd.bitsPerSample || 8;
+  const bitsPerSample = typeof bpsRaw === 'object'
+    ? (Array.isArray(bpsRaw) ? bpsRaw[0] : Object.values(bpsRaw)[0])
+    : bpsRaw;
+  const bytesPerSample = Math.max(1, Math.floor(bitsPerSample / 8));
+  const offsets    = Array.from(fd.TileOffsets  || fd.StripOffsets);
+  const byteCounts = Array.from(fd.TileByteCounts || fd.StripByteCounts);
   const [winX0, winY0, winX1, winY1] = opts.window || [0, 0, imgW, imgH];
   const outW = opts.width  || (winX1 - winX0);
   const outH = opts.height || (winY1 - winY0);
   const winW = winX1 - winX0, winH = winY1 - winY0;
-
   const txMin = Math.floor(winX0 / tw), txMax = Math.min(nTX - 1, Math.floor((winX1 - 1) / tw));
   const tyMin = Math.floor(winY0 / th), tyMax = Math.min(nTY - 1, Math.floor((winY1 - 1) / th));
-
   const nBands = samplesPerPixel;
-  const bands  = Array.from({ length: nBands }, () => new Float32Array(winW * winH));
+  // Use correct typed array for the bit depth
+  const BandArray = bytesPerSample === 1 ? Uint8Array : bytesPerSample === 2 ? Uint16Array : Float32Array;
+  const bands  = Array.from({ length: nBands }, () => new BandArray(winW * winH));
   const sourceUrl = tiff._sourceUrl;
-  if (!sourceUrl) throw new Error('ZSTD fallback: tiff._sourceUrl not set');
 
   for (let ty = tyMin; ty <= tyMax; ty++) {
     for (let tx = txMin; tx <= txMax; tx++) {
       const tIdx = ty * nTX + tx;
       const off = offsets[tIdx], bc = byteCounts[tIdx];
       if (!bc) continue;
-
       const resp = await fetch(sourceUrl, { headers: { Range: 'bytes=' + off + '-' + (off + bc - 1) } });
       if (!resp.ok) throw new Error('ZSTD tile fetch HTTP ' + resp.status);
-      const compressed = new Uint8Array(await resp.arrayBuffer());
-      const raw = zstdDecompress(compressed);
+      const raw = zstd.decompress(new Uint8Array(await resp.arrayBuffer()));
 
-      // Undo PREDICTOR=2 (horizontal differencing) — each sample = cumulative delta
+      // Undo PREDICTOR=2 horizontal differencing.
+      // INTERLEAVE=PIXEL: samples stored as (B0,B1..Bn, B0,B1..Bn per pixel)
+      // Delta is per-band across pixels, so step = nBands * bytesPerSample.
       if (predictor === 2) {
-        const rowBytes = tw * nBands * bytesPerSample;
+        const step     = nBands * bytesPerSample;
+        const rowBytes = tw * step;
         for (let row = 0; row < th; row++) {
-          const rowOff = row * rowBytes;
-          for (let b = 0; b < nBands; b++) {
-            for (let x = 1; x < tw; x++) {
-              const i = rowOff + (x * nBands + b) * bytesPerSample;
-              const p = rowOff + ((x - 1) * nBands + b) * bytesPerSample;
-              if (bytesPerSample === 1)      raw[i] = (raw[i] + raw[p]) & 0xFF;
-              else if (bytesPerSample === 2) { const v=(raw[i]|(raw[i+1]<<8))+(raw[p]|(raw[p+1]<<8)); raw[i]=v&0xFF; raw[i+1]=(v>>8)&0xFF; }
-            }
-          }
+          const base = row * rowBytes;
+          for (let col = step; col < rowBytes; col++)
+            raw[base + col] = (raw[base + col] + raw[base + col - step]) & 0xFF;
         }
       }
 
-      // Copy tile pixels into window bands
-      const tOriginX = tx * tw, tOriginY = ty * th;
-      const ox0 = Math.max(tOriginX, winX0), oy0 = Math.max(tOriginY, winY0);
-      const ox1 = Math.min(tOriginX + tw, winX1), oy1 = Math.min(tOriginY + th, winY1);
-
+      const tOX = tx * tw, tOY = ty * th;
+      const ox0 = Math.max(tOX, winX0), oy0 = Math.max(tOY, winY0);
+      const ox1 = Math.min(tOX + tw, winX1), oy1 = Math.min(tOY + th, winY1);
       for (let b = 0; b < nBands; b++) {
+        const dst = bands[b];
         for (let y = oy0; y < oy1; y++) {
           for (let x = ox0; x < ox1; x++) {
-            const si = ((y - tOriginY) * tw + (x - tOriginX)) * nBands + b;
-            const di = (y - winY0) * winW + (x - winX0);
-            bands[b][di] = bytesPerSample === 1 ? raw[si]
-              : bytesPerSample === 2 ? (raw[si * 2] | (raw[si * 2 + 1] << 8)) : raw[si];
+            // Interleaved: pixel index * nBands + band = sample index
+            // byte offset = sample index * bytesPerSample
+            const si      = ((y - tOY) * tw + (x - tOX)) * nBands + b;
+            const byteOff = si * bytesPerSample;
+            dst[(y - winY0) * winW + (x - winX0)] = bytesPerSample === 1
+              ? raw[byteOff]
+              : bytesPerSample === 2
+                ? (raw[byteOff] | (raw[byteOff + 1] << 8))
+                : new DataView(raw.buffer).getFloat32(byteOff, true);
           }
         }
       }
     }
   }
 
-  // Resample to output size
   const result = [];
   for (let b = 0; b < nBands; b++) {
-    if (outW === winW && outH === winH) {
-      result.push(bands[b]);
-    } else {
+    if (outW === winW && outH === winH) { result.push(bands[b]); } else {
+      const out = new BandArray(outW * outH);
+      const sx = winW / outW, sy = winH / outH;
+      for (let y = 0; y < outH; y++)
+        for (let x = 0; x < outW; x++)
+          out[y * outW + x] = bands[b][Math.round(y * sy) * winW + Math.round(x * sx)];
+      result.push(out);
+    }
+  }
+  result.width = outW; result.height = outH;
+  return result;
+}
+
+// LERC tile fallback — for any genuine LERC tiles.
+// Fetches raw tiles via HTTP Range, detects actual tile format from magic bytes,
+// decodes WEBP tiles via ImageBitmap or pure LERC via LercDecode.js.
+async function readRastersLerc(tiff, image, opts) {
+  const lerc = await window._lercReady;
+  const fd   = image.fileDirectory;
+  const imgW = fd.ImageWidth, imgH = fd.ImageLength;
+  const tw   = fd.TileWidth  || imgW, th = fd.TileLength || imgH;
+  const nTX  = Math.ceil(imgW / tw),  nTY = Math.ceil(imgH / th);
+  const offsets    = Array.from(fd.TileOffsets  || fd.StripOffsets);
+  const byteCounts = Array.from(fd.TileByteCounts || fd.StripByteCounts);
+  const [winX0, winY0, winX1, winY1] = opts.window || [0, 0, imgW, imgH];
+  const outW = opts.width  || (winX1 - winX0);
+  const outH = opts.height || (winY1 - winY0);
+  const winW = winX1 - winX0, winH = winY1 - winY0;
+  const txMin = Math.floor(winX0 / tw), txMax = Math.min(nTX - 1, Math.floor((winX1 - 1) / tw));
+  const tyMin = Math.floor(winY0 / th), tyMax = Math.min(nTY - 1, Math.floor((winY1 - 1) / th));
+  const sourceUrl = tiff._sourceUrl;
+  if (!sourceUrl) throw new Error('LERC: tiff._sourceUrl not set');
+
+  let nBands = 0;
+  const tileData = [];
+
+  for (let ty = tyMin; ty <= tyMax; ty++) {
+    for (let tx = txMin; tx <= txMax; tx++) {
+      const tIdx = ty * nTX + tx;
+      const off = offsets[tIdx], bc = byteCounts[tIdx];
+      if (!bc) continue;
+      const resp = await fetch(sourceUrl, { headers: { Range: 'bytes=' + off + '-' + (off + bc - 1) } });
+      if (!resp.ok) throw new Error('LERC tile fetch HTTP ' + resp.status);
+      const ab    = await resp.arrayBuffer();
+      const bytes = new Uint8Array(ab);
+      const isWebp = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46;
+
+      let decoded;
+      if (isWebp) {
+        const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/webp' }));
+        const c = document.createElement('canvas');
+        c.width = bitmap.width; c.height = bitmap.height;
+        c.getContext('2d').drawImage(bitmap, 0, 0);
+        const d = c.getContext('2d').getImageData(0, 0, bitmap.width, bitmap.height);
+        const n = bitmap.width * bitmap.height;
+        const r = new Uint8Array(n), g = new Uint8Array(n), bch = new Uint8Array(n);
+        for (let i = 0; i < n; i++) { r[i] = d.data[i*4]; g[i] = d.data[i*4+1]; bch[i] = d.data[i*4+2]; }
+        decoded = { pixels: [r, g, bch], width: bitmap.width, height: bitmap.height, bandCount: 3 };
+      } else {
+        try { decoded = lerc.decode(ab); } catch { decoded = lerc.decode(bytes); }
+      }
+
+      if (!nBands) nBands = decoded.bandCount || decoded.pixels?.length || 1;
+      tileData.push({ tx, ty, decoded });
+    }
+  }
+
+  if (!nBands) throw new Error('LERC: no tiles decoded');
+  const bands = Array.from({ length: nBands }, () => new Float32Array(winW * winH));
+  for (const { tx, ty, decoded } of tileData) {
+    const px = decoded.pixels, tW = decoded.width || tw, tH = decoded.height || th;
+    const tOX = tx * tw, tOY = ty * th;
+    const ox0 = Math.max(tOX, winX0), oy0 = Math.max(tOY, winY0);
+    const ox1 = Math.min(tOX + tW, winX1), oy1 = Math.min(tOY + tH, winY1);
+    for (let b = 0; b < nBands; b++) {
+      const src = px[b] || px, dst = bands[b];
+      for (let y = oy0; y < oy1; y++)
+        for (let x = ox0; x < ox1; x++)
+          dst[(y - winY0) * winW + (x - winX0)] = src[(y - tOY) * tW + (x - tOX)];
+    }
+  }
+
+  const result = [];
+  for (let b = 0; b < nBands; b++) {
+    if (outW === winW && outH === winH) { result.push(bands[b]); } else {
       const out = new Float32Array(outW * outH);
       const sx = winW / outW, sy = winH / outH;
       for (let y = 0; y < outH; y++)
@@ -1923,12 +2032,12 @@ async function readRastersZstd(tiff, image, opts) {
 //   done → rendering   (re-render triggered by map move)
 async function renderOneCog(cog) {
   if (!cog) return;
-  // Skip if a render is already in flight for this COG — LERC tile fetches
-  // are slow and concurrent renders cause stack overflows via moveend events.
+  // Skip if image not loaded yet (e.g. after basemap swap)
+  if (!cog.image || !cog.tiff) return;
+  // Skip if a render is already in flight
   if (cog._rendering) { cog._dirty = true; return; }
   cog._rendering = true;
   const token = ++cog.token;
-  // Show spinner while rendering (but don't flash back if already done and just re-rendering on move)
   if (cog.status === 'done') { cog.status = 'rendering'; _updateCogBar(); }
 
   try {
@@ -1947,30 +2056,33 @@ async function renderOneCog(cog) {
     const screenH = Math.round(vpH * (intMaxN - intMinN) / (vpMaxN - vpMinN));
 
     // ── Overview selection ────────────────────────────────────────────────────
-    // Pick the overview level whose native resolution is closest to (but not
-    // less than) the screen resolution. This avoids fetching far more pixels
-    // than the screen can display.
-    let image = cog.image; // default: full-res (image 0)
+    // Pick the overview level whose native resolution is closest to screen res.
+    // Cache the overview list on first use to avoid re-fetching headers every render.
+    let image = cog.image;
     const fullW = cog.image.getWidth();
-    const targetW = Math.round(fullW * (intMaxE - intMinE) / cogSpanE); // native pixels for visible area
+    const targetW = Math.round(fullW * (intMaxE - intMinE) / cogSpanE);
+
     if (cog.tiff._imageCount > 1 && screenW < targetW) {
-      // Find the smallest overview that is still >= screenW
-      let bestIdx = 0;
-      let bestW   = fullW;
-      for (let i = 1; i < cog.tiff._imageCount; i++) {
-        try {
-          const ovr  = await cog.tiff.getImage(i);
-          const ovrW = ovr.getWidth();
-          // Overview pixel count for the visible area
-          const ovrVisible = Math.round(ovrW * (intMaxE - intMinE) / cogSpanE);
-          if (ovrVisible >= screenW && ovrW < bestW) {
-            bestW   = ovrW;
-            bestIdx = i;
-            image   = ovr;
-          }
-        } catch { break; }
+      // Build overview cache on first render
+      if (!cog._overviews) {
+        cog._overviews = [{ idx: 0, w: fullW, img: cog.image }];
+        for (let i = 1; i < cog.tiff._imageCount; i++) {
+          try {
+            const ovr = await cog.tiff.getImage(i);
+            cog._overviews.push({ idx: i, w: ovr.getWidth(), img: ovr });
+          } catch { break; }
+        }
       }
-      if (bestIdx > 0) debugInfo('Overview: using level ' + bestIdx + ' (' + bestW + 'px wide)');
+      // Pick smallest overview still >= screenW
+      let best = cog._overviews[0];
+      for (const ovr of cog._overviews) {
+        const ovrVisible = Math.round(ovr.w * (intMaxE - intMinE) / cogSpanE);
+        if (ovrVisible >= screenW && ovr.w < best.w) best = ovr;
+      }
+      if (best.idx > 0) {
+        image = best.img;
+        debugInfo('Overview: level ' + best.idx + ' (' + best.w + 'px)');
+      }
     }
 
     const cogW = image.getWidth(), cogH = image.getHeight();
@@ -1991,11 +2103,20 @@ async function renderOneCog(cog) {
     });
     if (token !== cog.token) return;
 
-    const rgba = toRGBA(data, readW, readH);
+    const nirMode = /near.?infrared/i.test(cog.label || '');
+    const rgba = toRGBA(data, readW, readH, nirMode);
     const canvas = document.createElement('canvas');
     canvas.width = readW; canvas.height = readH;
     canvas.getContext('2d').putImageData(new ImageData(rgba, readW, readH), 0, 0);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+
+    // Use Blob URL instead of dataURL — much faster to encode and smaller memory footprint
+    const blob    = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
+    const blobUrl = URL.createObjectURL(blob);
+    if (token !== cog.token) { URL.revokeObjectURL(blobUrl); return; }
+
+    // Revoke previous blob URL to free memory
+    if (cog._blobUrl) URL.revokeObjectURL(cog._blobUrl);
+    cog._blobUrl = blobUrl;
 
     const [intSwLng, intSwLat] = toWGS84(intMinE, intMinN);
     const [intNwLng, intNwLat] = toWGS84(intMinE, intMaxN);
@@ -2006,11 +2127,11 @@ async function renderOneCog(cog) {
     const coords = [[intNwLng,intNwLat],[intNeLng,intNeLat],[intSeLng,intSeLat],[intSwLng,intSwLat]];
     const src = map.getSource(cog.sourceId);
     if (src) {
-      src.updateImage({ url: dataUrl, coordinates: coords });
+      src.updateImage({ url: blobUrl, coordinates: coords });
     } else {
-      map.addSource(cog.sourceId, { type: 'image', url: dataUrl, coordinates: coords });
+      map.addSource(cog.sourceId, { type: 'image', url: blobUrl, coordinates: coords });
       map.addLayer({ id: cog.layerId, type: 'raster', source: cog.sourceId,
-        paint: { 'raster-opacity': 0.9, 'raster-fade-duration': 150 } });
+        paint: { 'raster-opacity': cog.opacity !== undefined ? cog.opacity : 0.9, 'raster-fade-duration': 150 } });
       map.on('contextmenu', cog.layerId, window._onCogContextMenu);
     }
     // Mark done on first successful render only
@@ -2029,10 +2150,14 @@ async function renderOneCog(cog) {
   }
 }
 
-// Re-render all active COGs. Called on map 'moveend' so overlays
-// update whenever the viewport changes (pan, zoom, rotate).
+// Re-render all active COGs. Debounced 150ms after last moveend to avoid
+// thrashing during continuous pan/zoom — saves unnecessary fetches.
+let _renderAllTimer = null;
 function renderAllCogs() {
-  _cogMap.forEach(entry => renderOneCog(entry));
+  clearTimeout(_renderAllTimer);
+  _renderAllTimer = setTimeout(() => {
+    _cogMap.forEach(entry => renderOneCog(entry));
+  }, 150);
 }
 
 map.on('moveend', renderAllCogs);
@@ -2319,6 +2444,17 @@ map.on('zoomstart', _dismissCtxMenu);
 })(); // end geocoder IIFE
 
 document.getElementById('cog-overlay-close').onclick = () => removeCogOverlay();
+
+document.getElementById('cog-bar-toggle-all').onclick = () => {
+  const allOff = [..._cogMap.values()].every(e => e.visible === false);
+  const newVis = allOff; // if all off → turn all on; otherwise turn all off
+  for (const entry of _cogMap.values()) {
+    entry.visible = newVis;
+    const vis = newVis ? 'visible' : 'none';
+    if (map.getLayer(entry.layerId)) map.setLayoutProperty(entry.layerId, 'visibility', vis);
+  }
+  _updateCogBar();
+};
 
 // Download all COG sheets that have rendered successfully (green tick).
 // Each file is fetched and saved separately via blobDownload(), with a
