@@ -24,24 +24,70 @@
      ═══════════════════════════════════════════════════════════════ -->
 <script>
 window._lercReady = new Promise((resolve, reject) => {
-  const urls = [
+  // Try multiple CDNs and multiple versions.
+  // v4 changed its UMD global name — we probe every known variant.
+  const candidates = [
+    // Self-hosted on S3 — tried first, avoids external CDN blocks
+    'https://imagery.mutant.kiwi/LercDecode.js',
+    // ESRI's own CDN (no version pin — always latest stable)
     'https://js.arcgis.com/lerc/lerc.min.js',
+    // v4.x on jsdelivr
     'https://cdn.jsdelivr.net/npm/@esri/lerc@4.0.1/dist/browser/lerc.min.js',
+    // v3.x on jsdelivr — different global name (LercDecode)
+    'https://cdn.jsdelivr.net/npm/@esri/lerc@3.0.0/dist/LercDecode.min.js',
+    // unpkg fallbacks
     'https://unpkg.com/@esri/lerc@4.0.1/dist/browser/lerc.min.js',
+    'https://unpkg.com/@esri/lerc@3.0.0/dist/LercDecode.min.js',
+    // lerc package (no @esri scope) — different package, same API
+    'https://unpkg.com/lerc@3.0.0/LercDecode.js',
   ];
   let i = 0;
+
+  // Probe every plausible global the library might set after loading
+  function detectLib() {
+    // v4 UMD global variants
+    const candidates = [
+      window.Lerc,
+      window.LercDecode,
+      window.lerc,
+      // v4 may nest under esri namespace
+      window.esri && window.esri.lerc,
+      // Some builds export as module-style default
+      window['@esri/lerc'],
+    ].filter(Boolean);
+
+    for (const lib of candidates) {
+      // Need a decode() function — either directly or on a nested object
+      if (typeof lib.decode === 'function') return lib;
+      if (lib.default && typeof lib.default.decode === 'function') return lib.default;
+    }
+    return null;
+  }
+
   function tryNext() {
-    if (i >= urls.length) { reject(new Error('All LERC CDNs failed')); return; }
+    if (i >= candidates.length) {
+      reject(new Error('All LERC CDNs failed — globals tried: Lerc, LercDecode, lerc, esri.lerc'));
+      return;
+    }
+    const url = candidates[i++];
     const s = document.createElement('script');
-    s.src = urls[i++];
+    s.src = url;
     s.onload = () => {
-      const lib = window.Lerc || window.LercDecode;
-      if (!lib || !lib.decode) { tryNext(); return; }
-      window.Lerc = lib;
+      const lib = detectLib();
+      if (!lib) {
+        // Loaded but no usable global found — log what IS on window for debugging
+        const lercKeys = Object.keys(window).filter(k => /lerc/i.test(k));
+        console.warn('[LERC] Script loaded but no decode() found. Window keys matching /lerc/:', lercKeys.join(', ') || 'none');
+        tryNext();
+        return;
+      }
+      window.Lerc = lib; // normalise to window.Lerc for readRastersLerc()
+      // v4 requires an async load() call to initialise the WASM module
       (typeof lib.load === 'function' ? lib.load() : Promise.resolve())
-        .then(() => resolve(lib)).catch(tryNext);
+        .then(() => resolve(lib))
+        .catch(err => { console.warn('[LERC] load() failed:', err); tryNext(); });
     };
-    s.onerror = tryNext;
+    s.onerror = () => { console.warn('[LERC] Failed to load:', url); tryNext(); };
     document.head.appendChild(s);
   }
   tryNext();
@@ -121,8 +167,8 @@ window._zstdReady = new Promise((resolve, reject) => {
     background: linear-gradient(180deg, rgba(10,12,15,0.97) 0%, rgba(10,12,15,0) 100%);
     pointer-events: none;
   }
-  #header h1 { font-size: 13px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent); }
-  #header .sub { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); letter-spacing: 0.1em; }
+  #header h1 { font-size: 17px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent); }
+  #header .sub { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--muted); letter-spacing: 0.1em; }
 
   #coords-bar {
     position: fixed; bottom: 24px; left: 24px; z-index: 10;
@@ -137,8 +183,29 @@ window._zstdReady = new Promise((resolve, reject) => {
     width: var(--panel-w); background: var(--surface); border-left: 1px solid var(--border);
     display: flex; flex-direction: column;
     transform: translateX(100%); transition: transform 0.4s cubic-bezier(0.16,1,0.3,1); will-change: transform;
+    min-width: 280px; max-width: 800px;
   }
   #panel.open { transform: translateX(0); }
+  #panel.resizing { transition: none; user-select: none; }
+
+  #panel-resize-handle {
+    position: absolute; left: -4px; top: 0; bottom: 0; width: 8px;
+    cursor: ew-resize; z-index: 10;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #panel-resize-handle::after {
+    content: '';
+    display: block;
+    width: 3px; height: 40px;
+    background: var(--border);
+    border-radius: 2px;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  #panel-resize-handle:hover::after,
+  #panel.resizing #panel-resize-handle::after { opacity: 1; background: var(--accent2); }
+
+
 
   #panel-header {
     padding: 20px 20px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
@@ -164,14 +231,15 @@ window._zstdReady = new Promise((resolve, reject) => {
   #progress-wrap { flex-shrink: 0; height: 3px; background: var(--surface2); }
   #progress-bar { height: 100%; width: 0; background: var(--accent); transition: width 0.2s; }
 
-  #results { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  #results { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; display: block; }
+  #results .result-card { margin-bottom: 8px; }
   #results::-webkit-scrollbar { width: 4px; }
   #results::-webkit-scrollbar-track { background: transparent; }
   #results::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
   .state-msg {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    flex: 1; gap: 12px; color: var(--muted); text-align: center; padding: 40px;
+    height: 200px; gap: 12px; color: var(--muted); text-align: center; padding: 40px;
   }
   .state-msg svg { opacity: 0.25; }
   .state-msg p { font-size: 13px; line-height: 1.6; }
@@ -331,6 +399,73 @@ window._zstdReady = new Promise((resolve, reject) => {
 
   * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 
+  /* ── Geocoder search bar ── */
+  #geocoder {
+    position: fixed; top: 64px; left: 24px; z-index: 15;
+    width: 340px;
+  }
+  #geocoder-input-wrap {
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(10,12,15,0.92); border: 1px solid var(--border);
+    border-radius: 5px; backdrop-filter: blur(10px);
+    padding: 0 12px; transition: border-color 0.2s;
+  }
+  #geocoder-input-wrap:focus-within {
+    border-color: var(--accent2);
+  }
+  #geocoder-icon {
+    color: var(--muted); flex-shrink: 0; pointer-events: none;
+  }
+  #geocoder-input {
+    flex: 1; background: transparent; border: none; outline: none;
+    font-family: 'JetBrains Mono', monospace; font-size: 13px;
+    color: var(--text); padding: 10px 0;
+    placeholder-color: var(--muted);
+  }
+  #geocoder-input::placeholder { color: var(--muted); }
+  #geocoder-clear {
+    background: transparent; border: none; color: var(--muted);
+    cursor: pointer; padding: 2px 4px; font-size: 14px; line-height: 1;
+    border-radius: 3px; transition: color 0.15s; display: none;
+  }
+  #geocoder-clear:hover { color: var(--text); }
+  #geocoder-spinner {
+    width: 11px; height: 11px; flex-shrink: 0;
+    border: 1.5px solid rgba(71,200,255,0.2);
+    border-top-color: var(--accent2); border-radius: 50%;
+    animation: spin 0.7s linear infinite; display: none;
+  }
+  #geocoder-results {
+    margin-top: 4px;
+    background: rgba(10,12,15,0.97); border: 1px solid rgba(71,200,255,0.2);
+    border-radius: 5px; backdrop-filter: blur(12px);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+    overflow: hidden; display: none;
+  }
+  #geocoder-results.visible { display: block; }
+  .geocoder-item {
+    padding: 9px 14px; cursor: pointer;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    transition: background 0.1s;
+  }
+  .geocoder-item:last-child { border-bottom: none; }
+  .geocoder-item:hover, .geocoder-item.active {
+    background: rgba(71,200,255,0.08);
+  }
+  .geocoder-item-name {
+    font-size: 13px; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .geocoder-item-detail {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    color: var(--muted); margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .geocoder-no-results {
+    padding: 12px 14px; font-size: 12px; color: var(--muted);
+    font-family: 'JetBrains Mono', monospace; text-align: center;
+  }
+
   /* ── COG right-click context menu ── */
   #cog-context-menu {
     position: fixed; z-index: 99998; display: none;
@@ -356,17 +491,19 @@ window._zstdReady = new Promise((resolve, reject) => {
   /* ── Debug window ── */
   #debug-win {
     position:fixed; bottom:16px; right:16px; z-index:99999;
-    transition: right 0.4s cubic-bezier(0.16,1,0.3,1);
     width:360px; max-width:calc(100vw - 32px);
     background:rgba(8,10,13,0.97); border:1px solid rgba(255,80,60,0.5);
     border-radius:6px; font-family:'JetBrains Mono',monospace; font-size:10px;
     backdrop-filter:blur(8px); box-shadow:0 4px 24px rgba(255,60,40,0.15);
+    user-select:none;
   }
+  #debug-win.dragging { transition: none; }
   #debug-titlebar {
     display:flex; align-items:center; gap:6px; padding:5px 8px;
-    border-bottom:1px solid rgba(255,80,60,0.2); cursor:default;
+    border-bottom:1px solid rgba(255,80,60,0.2); cursor:grab;
     background:rgba(255,60,40,0.08); border-radius:6px 6px 0 0;
   }
+  #debug-titlebar:active { cursor:grabbing; }
   #debug-badge {
     flex:1; font-size:9px; color:var(--muted);
     background:rgba(255,255,255,0.08); border-radius:3px; padding:1px 5px;
@@ -397,11 +534,23 @@ window._zstdReady = new Promise((resolve, reject) => {
   </div>
 </div>
 
+<div id="geocoder">
+  <div id="geocoder-input-wrap">
+    <svg id="geocoder-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+    </svg>
+    <input id="geocoder-input" type="text" placeholder="Search places…" autocomplete="off" spellcheck="false">
+    <div id="geocoder-spinner"></div>
+    <button id="geocoder-clear" title="Clear">✕</button>
+  </div>
+  <div id="geocoder-results"></div>
+</div>
+
 <div id="coords-bar">— , —</div>
 
 <div id="instructions">
   <span>Click</span> anywhere on the map to find imagery<br>
-  <span>650 layers</span> will be queried in parallel
+  <span>621,728 sheets</span> across all of New Zealand
 </div>
 
 <button id="config-btn" title="Layer configuration">
@@ -430,6 +579,7 @@ window._zstdReady = new Promise((resolve, reject) => {
 </div>
 
 <div id="panel">
+  <div id="panel-resize-handle"></div>
   <div id="panel-header">
     <div style="flex:1;min-width:0">
       <div id="panel-title">Imagery Results</div>
@@ -452,11 +602,29 @@ window._zstdReady = new Promise((resolve, reject) => {
 // available and confirms the page is ready to render COGs.
 document.addEventListener('DOMContentLoaded', () => {
   debugInfo('GeoTIFF Pool ready — WEBP/LZW/Deflate/JPEG native; LERC+ZSTD via fallback');
+
+  // When a decompression library becomes available, automatically re-render
+  // any COGs that previously failed because the library wasn't ready yet.
+  // This handles the race condition where a COG is opened before the CDN
+  // script has finished loading.
+  function retryErroredCogs(libName) {
+    if (typeof _cogMap === 'undefined') return;
+    const errored = [..._cogMap.values()].filter(e => e.status === 'error');
+    if (errored.length) {
+      debugInfo(libName + ' ready — retrying ' + errored.length + ' failed COG(s)…');
+      errored.forEach(e => { e.status = 'rendering'; renderOneCog(e); });
+      _updateCogBar();
+    } else {
+      debugInfo(libName + ' ready ✓');
+    }
+  }
+
   window._lercReady
-    .then(() => debugInfo('@esri/lerc ready ✓'))
+    .then(() => retryErroredCogs('@esri/lerc'))
     .catch(err => debugInfo('@esri/lerc unavailable (' + err.message + ')'));
+
   window._zstdReady
-    .then(() => debugInfo('Zstd ready ✓ (ZstdCodec or fzstd)'))
+    .then(() => retryErroredCogs('Zstd'))
     .catch(err => debugInfo('Zstd unavailable (' + err.message + ')'));
 });
 // ═══════════════════════════════════════════════════════════════════
@@ -470,10 +638,20 @@ if (typeof Sentry !== 'undefined') {
   Sentry.init({
     dsn: "https://0947976df5d6405b80cf080d0ea4971a@mutantkiwi.bugsink.com/1",
     tracesSampleRate: 0.2,
+    maxBreadcrumbs: 20,
     beforeSend(event) {
       // Suppress noisy MapLibre sprite warnings
       const msg = event.message || '';
       if (msg.includes('could not be loaded') || msg.includes('styleimagemissing')) return null;
+      // Trim exception values to avoid 413 payload too large
+      if (event.exception && event.exception.values) {
+        event.exception.values = event.exception.values.slice(0, 3);
+        event.exception.values.forEach(v => {
+          if (v.stacktrace && v.stacktrace.frames) {
+            v.stacktrace.frames = v.stacktrace.frames.slice(-10);
+          }
+        });
+      }
       return event;
     }
   });
@@ -492,32 +670,12 @@ proj4.defs('EPSG:2193',
 const toNZTM  = (lng, lat) => proj4('EPSG:4326', 'EPSG:2193', [lng, lat]);
 const toWGS84 = (e, n)     => proj4('EPSG:2193', 'EPSG:4326', [e, n]);
 
-// Base URL for all FGB and COG files hosted on S3
-const BASE_URL = 'https://s3.dualstack.ap-southeast-2.amazonaws.com/gbf.nz.imagery/layers/';
+// Master FGB — single file containing all 621,728 imagery sheets across NZ.
+// Spatially indexed with Hilbert R-tree so only features intersecting the
+// click bounding box are fetched via HTTP range requests.
+const MASTER_FGB = 'https://imagery.mutant.kiwi/all_imagery.fgb';
 
 const CONFIG = {
-  layers: [
-    {"url": BASE_URL + "northland_auckland_sn8104_1982_1983_0_4m.fgb",  "label": "Northland / Auckland 0.4m SN8104 (1982-1983)",        "imageUrlField": "asset_url_image"},
-    {"url": BASE_URL + "northland_auckland_sn9482_1995_1996_0_8m.fgb",  "label": "Northland / Auckland 0.8m SN9482 (1995-1996)",        "imageUrlField": "asset_url_image"},
-    {"url": BASE_URL + "northland_2014_2015_0_1m.fgb",                  "label": "Northland 0.1m Urban Aerial Photos (2014-2015)",      "imageUrlField": "asset_url_image"},
-    {"url": BASE_URL + "northland_2016_0_1m.fgb",                       "label": "Northland 0.1m Urban Aerial Photos (2016)",           "imageUrlField": "asset_url_image"},
-    {"url": BASE_URL + "northland_sn5932_1981_1982_0_375m.fgb",         "label": "Northland 0.375m SN5932 (1981-1982)",                 "imageUrlField": "asset_url_image"},
-    {"url": BASE_URL + "northland_snc5797_1980_0_375m.fgb",             "label": "Northland 0.375m SNC5797 (1980)",                     "imageUrlField": "asset_url_image"},
-    {"url": BASE_URL + "northland_2023_2024_0_3m.fgb",                  "label": "Northland 0.3m Rural Aerial Photos (2023-2025)",      "imageUrlField": "asset_url_image"},
-    {"url": BASE_URL + "northland_snc8573_1985_0_3m.fgb",               "label": "Northland 0.3m SNC8573 (1985)",                       "imageUrlField": "asset_url_image"},
-    {"url": BASE_URL + "northland_2014_2016_0_4m.fgb",                  "label": "Northland 0.4m Rural Aerial Photos (2014-2016)",      "imageUrlField": "asset_url_image"},
-    {"url": BASE_URL + "northland_snc12835_2005_0_64m.fgb",             "label": "Northland 0.64m SNC12835 (2005)",                     "imageUrlField": "asset_url_image"},
-    {"url": BASE_URL + "northland_sn9281_1993_0_6m.fgb",                "label": "Northland 0.6m SN9281 (1993)",                        "imageUrlField": "asset_url_image"},
-    {"url": BASE_URL + "northland_2003_0_75m.fgb",                      "label": "Northland 0.75m Rural Aerial Photos (2003)",          "imageUrlField": "asset_url_image"},
-    {"url": BASE_URL + "northland_snc9935_2000_2003_0_75m.fgb",         "label": "Northland 0.75m SNC9935 (2000-2003)",                 "imageUrlField": "asset_url_image"},
-    {"url": BASE_URL + "northland_2004_0_78m.fgb",                      "label": "Northland 0.78m Rural Aerial Photos (2004)",          "imageUrlField": "asset_url_image"},
-    {"url": BASE_URL + "northland_sn5780_1980_0_8m.fgb",                "label": "Northland 0.8m SN5780 (1980)",                        "imageUrlField": "asset_url_image"},
-    {"url": BASE_URL + "northland_sn8328_1984_1986_0_8m.fgb",           "label": "Northland 0.8m SN8328 (1984-1986)",                   "imageUrlField": "asset_url_image"},
-    {"url": BASE_URL + "northland_2003_1m.fgb",                         "label": "Northland 1m Rural Aerial Photos (2003)",             "imageUrlField": "asset_url_image"},
-    {"url": BASE_URL + "northland_2006_1m.fgb",                         "label": "Northland 1m Rural Aerial Photos (2006)",             "imageUrlField": "asset_url_image"}
-  ],
-
-  concurrency: 20,
   mapStyle: 'https://tiles.openfreemap.org/styles/dark',
 };
 
@@ -568,10 +726,10 @@ const panelCoord = document.getElementById('panel-coords');
 let currentQuery = null;
 
 // Slides the debug panel left when the results panel is open,
-// so they don't overlap. Uses CSS transition for smooth movement.
+// so they don't overlap. Skipped if the user has manually dragged it.
 function _shiftDebug(panelOpen) {
   const dbg = document.getElementById('debug-win');
-  if (!dbg) return;
+  if (!dbg || dbg._dragged) return;
   dbg.style.right = panelOpen ? 'calc(var(--panel-w) + 16px)' : '16px';
 }
 
@@ -584,6 +742,35 @@ function closePanel() {
   panel.classList.remove('open');
   _shiftDebug(false);
 }
+
+// ── Panel resize (drag left edge) ─────────────────────────────────────────────
+(function() {
+  const panel  = document.getElementById('panel');
+  const handle = document.getElementById('panel-resize-handle');
+  let dragging = false, startX = 0, startW = 0;
+
+  handle.addEventListener('mousedown', e => {
+    dragging = true;
+    startX   = e.clientX;
+    startW   = panel.offsetWidth;
+    panel.classList.add('resizing');
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const delta = startX - e.clientX;          // drag left = wider
+    const newW  = Math.min(800, Math.max(280, startW + delta));
+    panel.style.width = newW + 'px';
+    document.documentElement.style.setProperty('--panel-w', newW + 'px');
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    panel.classList.remove('resizing');
+  });
+})();
 
 document.getElementById('close-btn').onclick = () => {
   closePanel();
@@ -598,49 +785,42 @@ document.getElementById('close-btn').onclick = () => {
 // QUERY ENGINE
 // ═══════════════════════════════════════════════════════════════════
 
-// Query a single FGB layer for features intersecting a map click.
+// Query the master FGB for all imagery sheets intersecting a map click.
 //
-// Strategy: convert the WGS84 click to NZTM2000, build a 5km bounding
-// box, use flatgeobuf HTTP range request to stream only overlapping
-// features, then do a precise point-in-polygon test on each candidate.
+// One HTTP request against the single spatially-indexed all_imagery.fgb
+// replaces what was previously 650 parallel per-layer requests.
+// The Hilbert R-tree in the FGB means only features within the bounding
+// box are streamed — typically a few dozen KB for any given click location.
 //
-// Returns an array of matching GeoJSON features (geometry reprojected
-// to WGS84 so MapLibre can use them directly).
-//
-// @param {object}  layerDef  - CONFIG.layers entry { url, label, imageUrlField }
-// @param {number}  lngWGS    - Click longitude (WGS84)
-// @param {number}  latWGS    - Click latitude (WGS84)
-// @param {object}  token     - Cancellation token { cancelled: bool }
+// @param {number}  lngWGS - Click longitude (WGS84)
+// @param {number}  latWGS - Click latitude (WGS84)
+// @param {object}  token  - Cancellation token { cancelled: bool }
 // @returns {Feature[]}
-async function queryFlatGeobuf(layerDef, lngWGS, latWGS, token) {
+async function queryFlatGeobuf(lngWGS, latWGS, token) {
   if (token.cancelled) return [];
 
-  // Convert WGS84 click to NZTM2000 metres (EPSG:2193)
+  // Convert WGS84 click to NZTM2000 metres (EPSG:2193) — FGB is in this CRS
   const [e, n] = toNZTM(lngWGS, latWGS);
-  const d = 5000; // 5 km buffer in metres
+  const d = 1000; // 1 km bbox buffer — tight is fine with a spatial index
   const rect = { minX: e - d, minY: n - d, maxX: e + d, maxY: n + d };
 
   try {
     const results = [];
     let featureCount = 0;
-    // flatgeobuf.deserialize(url, rect) uses HTTP range requests efficiently
-    for await (const feature of flatgeobuf.deserialize(layerDef.url, rect)) {
+    for await (const feature of flatgeobuf.deserialize(MASTER_FGB, rect)) {
       featureCount++;
       if (token.cancelled) break;
-      // Point-in-polygon in NZTM2000 space (same CRS as the FGB data)
+      // Precise point-in-polygon test in NZTM2000 space
       if (pointInFeature(e, n, feature)) {
-        feature._layer = layerDef;
-        // Reproject geometry to WGS84 for map zoom
+        // Reproject geometry to WGS84 for MapLibre footprint overlay
         feature.geometry = reprojectGeom(feature.geometry);
         results.push(feature);
       }
     }
-    if (featureCount > 0 && results.length === 0) {
-      debugLog(`${featureCount} bbox, 0 pip — ${layerDef.label.slice(0,40)}`);
-    }
+    debugLog(`${featureCount} bbox hits, ${results.length} matched — click query`);
     return results;
   } catch (err) {
-    debugLog(`ERR: ${err.message.slice(0,70)} — ${layerDef.label.slice(0,25)}`);
+    debugLog(`ERR queryFlatGeobuf: ${err.message.slice(0, 80)}`);
     return [];
   }
 }
@@ -683,6 +863,41 @@ function _buildDebugUI() {
     document.getElementById('debug-body').style.display = _debugVisible ? 'block' : 'none';
     document.getElementById('debug-toggle').textContent = _debugVisible ? '▾' : '▸';
   };
+
+  // ── Drag to reposition ───────────────────────────────────────────
+  (function() {
+    const titlebar = document.getElementById('debug-titlebar');
+    let dragging = false, ox = 0, oy = 0;
+
+    titlebar.addEventListener('mousedown', e => {
+      if (e.target.closest('button')) return; // don't drag when clicking buttons
+      dragging = true;
+      const rect = el.getBoundingClientRect();
+      ox = e.clientX - rect.left;
+      oy = e.clientY - rect.top;
+      el.classList.add('dragging');
+      // Switch from right/bottom anchoring to left/top so drag coords work
+      el.style.right  = 'auto';
+      el.style.bottom = 'auto';
+      el.style.left   = rect.left + 'px';
+      el.style.top    = rect.top  + 'px';
+      el._dragged = true;
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', e => {
+      if (!dragging) return;
+      const x = Math.min(window.innerWidth  - el.offsetWidth,  Math.max(0, e.clientX - ox));
+      const y = Math.min(window.innerHeight - el.offsetHeight, Math.max(0, e.clientY - oy));
+      el.style.left = x + 'px';
+      el.style.top  = y + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+      dragging = false;
+      el.classList.remove('dragging');
+    });
+  })();
 }
 
 // Re-render the debug panel body from _debugEntries.
@@ -810,38 +1025,34 @@ map.on('click', async e => {
   resultsEl.innerHTML = `
     <div class="state-msg">
       <div class="spinner"></div>
-      <p>Querying <strong>${CONFIG.layers.length}</strong> layers…</p>
+      <p>Searching <strong>621,728</strong> imagery sheets…</p>
     </div>`;
   progressEl.style.width = '0%';
 
-  const layers = CONFIG.layers;
-  let completed = 0;
-  let found = 0;
   window._lastResults = [];
 
-  const batchSize = CONFIG.concurrency;
-  for (let i = 0; i < layers.length; i += batchSize) {
-    if (token.cancelled) return;
-    const batch = layers.slice(i, i + batchSize);
-    const batchResults = await Promise.all(
-      batch.map(layer => queryFlatGeobuf(layer, lng, lat, token))
-    );
-    for (const features of batchResults) {
-      for (const f of features) {
-        window._lastResults.push(f);
-        found++;
-        appendCard(f, found);
-      }
-    }
-    completed += batch.length;
-    progressEl.style.width = Math.round(completed / layers.length * 100) + '%';
-    countEl.textContent = found;
-    if (found === 0) {
-      const msg = resultsEl.querySelector('.state-msg p');
-      if (msg) msg.innerHTML = `Querying <strong>${CONFIG.layers.length}</strong> layers…<br>
-        <span style="color:var(--muted);font-size:10px">${completed} done</span>`;
-    }
-  }
+  // Single query against the master spatially-indexed FGB.
+  progressEl.style.width = '40%';
+  const features = await queryFlatGeobuf(lng, lat, token);
+  if (token.cancelled) return;
+
+  progressEl.style.width = '90%';
+
+  // Sort by year descending (newest first) — most relevant imagery on top.
+  // Features without a year sort to the bottom.
+  features.sort((a, b) => {
+    const ya = (a.properties.year || '').split('-')[0] || '0';
+    const yb = (b.properties.year || '').split('-')[0] || '0';
+    return parseInt(yb) - parseInt(ya);
+  });
+
+  window._lastResults = features;
+  const total = features.length;
+  countEl.textContent = total;
+
+  // Show limit slider when there are more than 10 results
+  features.forEach((f, i) => appendCard(f, i + 1));
+  const found = total;
 
   progressEl.style.width = '100%';
   setTimeout(() => { progressEl.style.width = '0'; }, 600);
@@ -860,19 +1071,30 @@ map.on('click', async e => {
 // ═══════════════════════════════════════════════════════════════════
 // CARD RENDERING
 // ═══════════════════════════════════════════════════════════════════
-// Build and append a result card for a single matched feature.
+// Build and append a result card for a single matched feature from the master FGB.
+// Each feature represents one imagery sheet (series + tile).
 // Cards are collapsible; expanding one collapses others.
-// Wires up the "Open on Map", "Copy URL", and "Show Extents" buttons.
 //
-// @param {Feature} feature - GeoJSON feature with ._layer attached
+// Fields used from the master FGB:
+//   title          — human readable name e.g. "Northland 0.1m Urban Aerial Photos (2014-2015)"
+//   title_unicode  — series identifier e.g. "northland_2014_2015_0_1m"
+//   region         — region name e.g. "northland"
+//   year           — extracted from title e.g. "2014-2015"
+//   asset_id       — tile identifier e.g. "AW30_500_020059"
+//   asset_url_image — full S3 URL to the COG .tiff file
+//
+// @param {Feature} feature - GeoJSON feature from master FGB
 // @param {number}  index   - 1-based display index
 function appendCard(feature, index) {
-  const layer   = feature._layer;
-  const props   = feature.properties || {};
-  const imageUrl = props[layer.imageUrlField] || props['image_url'] || props['url'] || props['href'] || '';
+  const props    = feature.properties || {};
+  const imageUrl = props.asset_url_image || '';
 
-  const SHOW_KEYS = ['title', 'title_unicode', 'region', 'asset_id'];
-  const metaKeys = SHOW_KEYS.filter(k => props[k] !== undefined && props[k] !== null);
+  // Label shown in the card header — title is most readable
+  const label    = props.title || props.title_unicode || 'Unknown series';
+
+  // Metadata rows shown in the expanded card body
+  const SHOW_KEYS = ['region', 'year', 'asset_id', 'title_unicode'];
+  const metaKeys  = SHOW_KEYS.filter(k => props[k] != null && props[k] !== '');
 
   const existingMsg = resultsEl.querySelector('.state-msg');
   if (existingMsg) existingMsg.remove();
@@ -880,17 +1102,16 @@ function appendCard(feature, index) {
   const card = document.createElement('div');
   card.className = 'result-card';
   card.dataset.index = index;
-  card.dataset.layerUrl = layer.url;
-  if (layer.url === _pinnedLayerUrl) card.classList.add('expanded');
-
-  const featName = props.name || props.id || props.fid || props.feature_id || `Feature ${index}`;
+  // Use title_unicode as the card key (stable series identifier)
+  card.dataset.layerUrl = props.title_unicode || String(index);
+  if (card.dataset.layerUrl === _pinnedLayerUrl) card.classList.add('expanded');
 
   card.innerHTML = `
     <div class="card-header">
       <div class="card-index">${index}</div>
       <div class="card-info">
-        <div class="card-layer">${escHtml(layer.label)}</div>
-        <div class="card-feat">${escHtml(String(featName))}</div>
+        <div class="card-layer">${escHtml(label)}</div>
+        <div class="card-feat">${escHtml(props.asset_id || props.title_unicode || '')}</div>
       </div>
       <svg class="card-chevron" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
     </div>
@@ -901,55 +1122,24 @@ function appendCard(feature, index) {
         </table>` : ''}
       <div class="card-actions">
         ${imageUrl ? `
-        <button class="btn btn-secondary" style="border-color:var(--accent);color:var(--accent)" data-cog-url data-cog-label>
+        <button class="btn btn-secondary" style="border-color:var(--accent);color:var(--accent)"
+          data-cog-url="${escHtml(imageUrl)}"
+          data-cog-label="${escHtml(label)}"
+          data-cog-title-unicode="${escHtml(props.title_unicode || '')}"
+          data-cog-asset-id="${escHtml(props.asset_id || '')}">
           <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
           Open on Map
         </button>
-        <button class="btn btn-secondary" onclick="copyToClipboard('${escHtml(imageUrl)}', this)">
-          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-          Copy URL
-        </button>` : ''}
-        <button class="btn btn-ghost" data-extents-btn>
-          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="3,9 3,3 9,3"/><polyline points="21,9 21,3 15,3"/><polyline points="3,15 3,21 9,21"/><polyline points="21,15 21,21 15,21"/></svg>
-          Show Extents
-        </button>
+` : ''}
+
       </div>
     </div>`;
 
-  card.querySelector('.card-header').addEventListener('click', () => {
-    const wasOpen = card.classList.contains('expanded');
-    // Collapse all cards first
-    resultsEl.querySelectorAll('.result-card.expanded').forEach(c => c.classList.remove('expanded'));
-    if (!wasOpen) {
-      card.classList.add('expanded');
-    }
-    showFootprint(feature, true);
-  });
+  // Store feature reference on card element for footprint display
+  card._feature = feature;
 
   card.addEventListener('mouseenter', () => showFootprint(feature, false));
   card.addEventListener('mouseleave', () => { if (!card.classList.contains('footprint-active')) clearFootprintIfHover(); });
-
-  // Wire Open on Map button via data attributes (avoids inline JSON quoting issues)
-  const cogBtn = card.querySelector('[data-cog-url]');
-  if (cogBtn && imageUrl) {
-    cogBtn.dataset.cogUrl          = imageUrl;
-    cogBtn.dataset.cogLabel        = layer.label;
-    cogBtn.dataset.cogTitleUnicode = props.title_unicode || '';
-    cogBtn.dataset.cogAssetId      = props.assest_id || props.asset_id || '';
-    cogBtn.addEventListener('click', e => {
-      e.stopPropagation();
-      loadCogOnMap(cogBtn.dataset.cogUrl, cogBtn.dataset.cogLabel, cogBtn.dataset.cogAssetId, cogBtn.dataset.cogTitleUnicode);
-    });
-  }
-
-  // Wire Show Extents button
-  const extBtn = card.querySelector('[data-extents-btn]');
-  if (extBtn) {
-    extBtn.addEventListener('click', e => {
-      e.stopPropagation();
-      toggleLayerExtents(layer, extBtn);
-    });
-  }
 
   resultsEl.appendChild(card);
 }
@@ -962,11 +1152,37 @@ function appendCard(feature, index) {
 function toRGBA(bands, w, h) {
   const n = w * h;
   const out = new Uint8ClampedArray(n * 4);
-  for (let i = 0; i < n; i++) {
-    if (bands.length === 1) {
+
+  // geotiff.js Pool decoding WEBP tiles may return a single interleaved
+  // array of length w*h*3 (RGB) or w*h*4 (RGBA) instead of separate bands.
+  // Detect this case by checking if the first band is longer than w*h.
+  if (bands.length === 1 && bands[0].length === n * 4) {
+    // Already interleaved RGBA
+    const src = bands[0];
+    for (let i = 0; i < n; i++) {
+      out[i*4]   = src[i*4];
+      out[i*4+1] = src[i*4+1];
+      out[i*4+2] = src[i*4+2];
+      out[i*4+3] = src[i*4+3];
+    }
+  } else if (bands.length === 1 && bands[0].length === n * 3) {
+    // Interleaved RGB
+    const src = bands[0];
+    for (let i = 0; i < n; i++) {
+      out[i*4]   = src[i*3];
+      out[i*4+1] = src[i*3+1];
+      out[i*4+2] = src[i*3+2];
+      out[i*4+3] = 255;
+    }
+  } else if (bands.length === 1) {
+    // Grayscale
+    for (let i = 0; i < n; i++) {
       const v = bands[0][i];
       out[i*4] = v; out[i*4+1] = v; out[i*4+2] = v; out[i*4+3] = 255;
-    } else {
+    }
+  } else {
+    // Separate bands (standard path for LZW, Deflate, ZSTD, LERC)
+    for (let i = 0; i < n; i++) {
       out[i*4]   = normalise(bands[0][i]);
       out[i*4+1] = normalise(bands[1] ? bands[1][i] : 0);
       out[i*4+2] = normalise(bands[2] ? bands[2][i] : 0);
@@ -1090,24 +1306,25 @@ function _removeExtentsEntry(key, btn) {
   if (btn) _setExtentsBtn(btn, 'show');
 }
 
-// Toggle the spatial extents overlay for a layer on/off.
-// On first show: streams the entire FGB file, adds fill + line layers,
-// and wires polygon clicks to load the clicked COG sheet.
+// Toggle the spatial extents overlay for a series on/off.
+// Streams all sheets for a given title_unicode from the master FGB
+// using a world-covering rect, filters by title_unicode client-side.
 // On hide: removes the layers and cleans up listeners.
 //
-// @param {object}      layerDef - CONFIG.layers entry
-// @param {HTMLElement} btn      - The toggle button element
-async function toggleLayerExtents(layerDef, btn) {
-  const key = layerDef.url;
+// @param {string}      titleUnicode - Series identifier e.g. "northland_2014_2015_0_1m"
+// @param {string}      label        - Human readable series name for debug messages
+// @param {HTMLElement} btn          - The toggle button element
+async function toggleLayerExtents(titleUnicode, label, btn) {
+  const key = titleUnicode;
 
-  // Already shown - remove
+  // Already shown — remove
   if (_extentsLayers.has(key)) {
     _removeExtentsEntry(key, btn);
     _pinnedLayerUrl = null;
     return;
   }
 
-  // Pin this layer's card open — persists across query rebuilds
+  // Pin this series card open
   _pinnedLayerUrl = key;
   const parentCard = btn.closest('.result-card');
   if (parentCard) {
@@ -1117,16 +1334,22 @@ async function toggleLayerExtents(layerDef, btn) {
 
   _setExtentsBtn(btn, 'loading');
 
-  // Use a world-covering rect so HTTP range requests still work with flatgeobuf 3.35
-  const worldRect = { minX: -1e9, minY: -1e9, maxX: 1e9, maxY: 1e9 };
+  // Stream the per-series FGB directly — much faster than filtering master FGB.
+  // URL is constructed from title_unicode which exactly matches the S3 filename.
+  const seriesFgbUrl = 'https://imagery.mutant.kiwi/layers/' + titleUnicode + '.fgb';
+  // Query master FGB filtered by title_unicode using a 1km bbox around NZ
+  // then filter client-side. This avoids needing per-series FGB files.
+  const worldRect = { minX: 1083999, minY: 4721999, maxX: 2471278, maxY: 6234001 };
   const features = [];
   try {
-    debugInfo('Extents: streaming ' + layerDef.label.slice(0, 50));
-    for await (const f of flatgeobuf.deserialize(layerDef.url, worldRect)) {
-      const geom = reprojectGeom(f.geometry);
-      if (geom) features.push({ type: 'Feature', geometry: geom, properties: f.properties || {} });
+    debugInfo('Extents: querying master FGB for ' + titleUnicode);
+    for await (const f of flatgeobuf.deserialize(MASTER_FGB, worldRect)) {
+      if (f.properties && f.properties.title_unicode === titleUnicode) {
+        const geom = reprojectGeom(f.geometry);
+        if (geom) features.push({ type: 'Feature', geometry: geom, properties: f.properties || {} });
+      }
     }
-    debugInfo('Extents OK: ' + features.length + ' features');
+    debugInfo('Extents OK: ' + features.length + ' features for ' + titleUnicode);
   } catch(err) {
     debugErr('Extents stream: ' + err.message);
     _setExtentsBtn(btn, 'failed');
@@ -1161,21 +1384,20 @@ async function toggleLayerExtents(layerDef, btn) {
   _extentsLayers.set(key, entry);
   _setExtentsBtn(btn, 'hide');
 
-  // Click polygon -> open COG on map, remove extents layer
+  // Click polygon → open COG on map
   entry.clickHandler = (e) => {
     e.preventDefault();
     e.originalEvent && e.originalEvent.stopPropagation();
     const feat = e.features && e.features[0];
     if (!feat) return;
-    const cogUrl = feat.properties[layerDef.imageUrlField]
-                || feat.properties['image_url']
-                || feat.properties['url']
-                || feat.properties['href'];
-    if (!cogUrl) { debugErr('No COG URL on clicked feature'); return; }
-    const assetId      = feat.properties['assest_id'] || feat.properties['asset_id'] || '';
-    const titleUnicode = feat.properties['title_unicode'] || '';
-    debugInfo('asset_id=' + assetId + ' props=' + Object.keys(feat.properties || {}).join(','));
-    loadCogOnMap(cogUrl, layerDef.label, assetId, titleUnicode);
+    const cogUrl = feat.properties.asset_url_image;
+    if (!cogUrl) { debugErr('No asset_url_image on clicked feature'); return; }
+    debugInfo('Extents click COG URL: ' + cogUrl);
+    const assetId      = feat.properties.asset_id || feat.properties.assest_id || _assetIdFromUrl(cogUrl);
+    const titleUnicode = feat.properties.title_unicode || '';
+    // Use the series label passed from the card (has the full human-readable title)
+    // rather than title_unicode which is the machine-readable series identifier.
+    loadCogOnMap(cogUrl, label, assetId, titleUnicode);
   };
   entry.onEnter = () => { map.getCanvas().style.cursor = 'pointer'; };
   entry.onLeave = () => { map.getCanvas().style.cursor = ''; };
@@ -1326,7 +1548,9 @@ async function loadCogOnMap(url, label, assetId, titleUnicode) {
   try {
     const tiff  = await GeoTIFF.fromUrl(url, { allowFullFile: true });
     tiff._sourceUrl = url; // needed for LERC tile-fetch fallback
-    const image = await tiff.getImage();
+    const imageCount = await tiff.getImageCount();
+    tiff._imageCount = imageCount; // cache for overview selection
+    const image = await tiff.getImage(0); // full-res image for bbox + metadata
     const [minE, minN, maxE, maxN] = image.getBoundingBox();
     const [swLng, swLat] = toWGS84(minE, minN);
     const [nwLng, nwLat] = toWGS84(minE, maxN);
@@ -1369,21 +1593,18 @@ async function loadCogOnMap(url, label, assetId, titleUnicode) {
 //   50003          → readRastersZstd()
 // Other compression failures are re-thrown as fatal errors.
 async function readRastersWithFallback(tiff, image, opts) {
-  // Primary path: geotiff.js + Pool handles WEBP, LZW, Deflate, JPEG natively
+  const compression = image.fileDirectory && image.fileDirectory.Compression;
+  // All NZ imagery is WEBP despite some files reporting compression tag 50001.
+  // geotiff.js handles WEBP natively. Try with pool first, fall back without.
   try {
-    return await image.readRasters(opts);
+    return await image.readRasters({ ...opts, pool: cogPool });
   } catch (err) {
-    const compression = image.fileDirectory && image.fileDirectory.Compression;
-    if (compression === 50000 || compression === 50001) {
-      debugInfo('LERC compression (' + compression + ') — trying tile fallback…');
-      return await readRastersLerc(tiff, image, opts);
+    try {
+      return await image.readRasters({ ...opts });
+    } catch (err2) {
+      debugErr('readRasters failed (compression=' + compression + '): ' + err2.message.slice(0, 80));
+      throw err2;
     }
-    if (compression === 50003) {
-      debugInfo('ZSTD compression — trying tile fallback…');
-      return await readRastersZstd(tiff, image, opts);
-    }
-    debugErr('readRasters failed (compression=' + compression + '): ' + err.message.slice(0, 80));
-    throw err;
   }
 }
 
@@ -1436,6 +1657,12 @@ async function readRastersLerc(tiff, image, opts) {
   const sourceUrl = tiff._sourceUrl;
   if (!sourceUrl) throw new Error('LERC fallback: tiff._sourceUrl not set');
 
+  // Verify lerc API before fetching any tiles
+  const hasDecodeImage = typeof lerc.decodeImage === 'function';
+  const hasDecode      = typeof lerc.decode === 'function';
+  if (!hasDecodeImage && !hasDecode) throw new Error('LERC: no decode() or decodeImage() on lerc object. Keys: ' + Object.keys(lerc).join(','));
+  debugInfo('LERC api — decode:' + hasDecode + ' decodeImage:' + hasDecodeImage);
+
   for (let ty = tyMin; ty <= tyMax; ty++) {
     for (let tx = txMin; tx <= txMax; tx++) {
       const tIdx = ty * nTX + tx;
@@ -1446,8 +1673,63 @@ async function readRastersLerc(tiff, image, opts) {
       if (!resp.ok) throw new Error('LERC tile fetch failed: HTTP ' + resp.status);
       const ab = await resp.arrayBuffer();
 
-      const decoded = lerc.decode(ab);
-      if (!nBands) nBands = decoded.bandCount || decoded.pixels.length;
+      let decoded;
+      try {
+        const bytes = new Uint8Array(ab);
+        // Check magic bytes — compression tag 50001 can lie.
+        // WEBP: 52 49 46 46 (RIFF)
+        // LERC2: 4c 65 72 63 32 (Lerc2)
+        // Zstd: 28 b5 2f fd
+        const isWebp  = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46;
+        const isZstd  = bytes[0] === 0x28 && bytes[1] === 0xB5 && bytes[2] === 0x2F && bytes[3] === 0xFD;
+        const isLerc2 = bytes[0] === 0x4C && bytes[1] === 0x65 && bytes[2] === 0x72 && bytes[3] === 0x63;
+
+        if (isWebp) {
+          // Tile is actually WEBP — decode via ImageBitmap
+          const blob = new Blob([bytes], { type: 'image/webp' });
+          const bitmap = await createImageBitmap(blob);
+          const canvas = document.createElement('canvas');
+          canvas.width = bitmap.width; canvas.height = bitmap.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(bitmap, 0, 0);
+          const imgData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+          // Return as separate R/G/B bands to match expected shape
+          const n = bitmap.width * bitmap.height;
+          const r = new Uint8Array(n), g = new Uint8Array(n), b = new Uint8Array(n);
+          for (let i = 0; i < n; i++) {
+            r[i] = imgData.data[i*4]; g[i] = imgData.data[i*4+1]; b[i] = imgData.data[i*4+2];
+          }
+          decoded = { pixels: [r, g, b], width: bitmap.width, height: bitmap.height, bandCount: 3 };
+        } else if (isZstd) {
+          // Zstd-wrapped LERC — decompress first then decode
+          const zstd = await window._zstdReady;
+          let raw;
+          if (typeof zstd.decompress === 'function') {
+            raw = zstd.decompress(bytes);
+          } else {
+            raw = await new Promise((res, rej) => {
+              const chunks = [];
+              const s = new zstd.Streaming.Decompress();
+              s.ondata = d => chunks.push(d);
+              s.onend  = () => { const out = new Uint8Array(chunks.reduce((a,b) => a+b.length, 0)); let o=0; chunks.forEach(c => { out.set(c,o); o+=c.length; }); res(out); };
+              s.onerror = rej;
+              s.push(bytes, true);
+            });
+          }
+          decoded = lerc.decode(raw.buffer || raw);
+        } else {
+          // Pure LERC
+          decoded = lerc.decode(ab);
+        }
+      } catch(e) {
+        throw new Error('LERC decode failed on tile [' + tx + ',' + ty + ']: ' + e.message);
+      }
+
+      // Log the decoded shape on the first tile so we can see what we got
+      if (!nBands) {
+        nBands = decoded.bandCount || (decoded.pixels && decoded.pixels.length) || 1;
+        debugInfo('LERC decoded tile shape — bandCount:' + nBands + ' w:' + decoded.width + ' h:' + decoded.height + ' pixelsType:' + (decoded.pixels && decoded.pixels[0] && decoded.pixels[0].constructor.name));
+      }
 
       tileData.push({ tx, ty, decoded });
     }
@@ -1641,6 +1923,10 @@ async function readRastersZstd(tiff, image, opts) {
 //   done → rendering   (re-render triggered by map move)
 async function renderOneCog(cog) {
   if (!cog) return;
+  // Skip if a render is already in flight for this COG — LERC tile fetches
+  // are slow and concurrent renders cause stack overflows via moveend events.
+  if (cog._rendering) { cog._dirty = true; return; }
+  cog._rendering = true;
   const token = ++cog.token;
   // Show spinner while rendering (but don't flash back if already done and just re-rendering on move)
   if (cog.status === 'done') { cog.status = 'rendering'; _updateCogBar(); }
@@ -1656,10 +1942,39 @@ async function renderOneCog(cog) {
     const intMaxE = Math.min(vpMaxE, cog.maxE), intMaxN = Math.min(vpMaxN, cog.maxN);
     if (intMinE >= intMaxE || intMinN >= intMaxN) return;
 
-    const cogW = cog.image.getWidth(), cogH = cog.image.getHeight();
     const cogSpanE = cog.maxE - cog.minE, cogSpanN = cog.maxN - cog.minN;
     const screenW = Math.round(vpW * (intMaxE - intMinE) / (vpMaxE - vpMinE));
     const screenH = Math.round(vpH * (intMaxN - intMinN) / (vpMaxN - vpMinN));
+
+    // ── Overview selection ────────────────────────────────────────────────────
+    // Pick the overview level whose native resolution is closest to (but not
+    // less than) the screen resolution. This avoids fetching far more pixels
+    // than the screen can display.
+    let image = cog.image; // default: full-res (image 0)
+    const fullW = cog.image.getWidth();
+    const targetW = Math.round(fullW * (intMaxE - intMinE) / cogSpanE); // native pixels for visible area
+    if (cog.tiff._imageCount > 1 && screenW < targetW) {
+      // Find the smallest overview that is still >= screenW
+      let bestIdx = 0;
+      let bestW   = fullW;
+      for (let i = 1; i < cog.tiff._imageCount; i++) {
+        try {
+          const ovr  = await cog.tiff.getImage(i);
+          const ovrW = ovr.getWidth();
+          // Overview pixel count for the visible area
+          const ovrVisible = Math.round(ovrW * (intMaxE - intMinE) / cogSpanE);
+          if (ovrVisible >= screenW && ovrW < bestW) {
+            bestW   = ovrW;
+            bestIdx = i;
+            image   = ovr;
+          }
+        } catch { break; }
+      }
+      if (bestIdx > 0) debugInfo('Overview: using level ' + bestIdx + ' (' + bestW + 'px wide)');
+    }
+
+    const cogW = image.getWidth(), cogH = image.getHeight();
+
     const cogPixW = Math.round(cogW * (intMaxE - intMinE) / cogSpanE);
     const cogPixH = Math.round(cogH * (intMaxN - intMinN) / cogSpanN);
     const readW = Math.max(1, Math.min(screenW, cogPixW));
@@ -1670,10 +1985,9 @@ async function renderOneCog(cog) {
     const winMinY = Math.max(0,    Math.floor((cog.maxN - intMaxN) / cogSpanN * cogH));
     const winMaxY = Math.min(cogH, Math.ceil( (cog.maxN - intMinN) / cogSpanN * cogH));
 
-    const data = await readRastersWithFallback(cog.tiff, cog.image, {
+    const data = await readRastersWithFallback(cog.tiff, image, {
       window: [winMinX, winMinY, winMaxX, winMaxY],
-      width: readW, height: readH, resampleMethod: 'bilinear',
-      pool: cogPool,
+      width: readW, height: readH,
     });
     if (token !== cog.token) return;
 
@@ -1681,7 +1995,7 @@ async function renderOneCog(cog) {
     const canvas = document.createElement('canvas');
     canvas.width = readW; canvas.height = readH;
     canvas.getContext('2d').putImageData(new ImageData(rgba, readW, readH), 0, 0);
-    const dataUrl = canvas.toDataURL('image/png');
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
 
     const [intSwLng, intSwLat] = toWGS84(intMinE, intMinN);
     const [intNwLng, intNwLat] = toWGS84(intMinE, intMaxN);
@@ -1704,6 +2018,14 @@ async function renderOneCog(cog) {
   } catch (err) {
     console.error('COG render error:', err);
     if (cog.status !== 'done') { cog.status = 'error'; _updateCogBar(); }
+  } finally {
+    cog._rendering = false;
+    // If the map moved while we were rendering, schedule one more render
+    // using setTimeout to break the call stack entirely.
+    if (cog._dirty) {
+      cog._dirty = false;
+      setTimeout(() => renderOneCog(cog), 0);
+    }
   }
 }
 
@@ -1714,6 +2036,43 @@ function renderAllCogs() {
 }
 
 map.on('moveend', renderAllCogs);
+
+// ═══════════════════════════════════════════════════════════════════
+// RESULTS PANEL — DELEGATED EVENT HANDLER
+// One listener on the results container handles all card interactions.
+// Set up once at page load — not inside appendCard — so it is never
+// lost when resultsEl.innerHTML is cleared between queries.
+// ═══════════════════════════════════════════════════════════════════
+resultsEl.addEventListener('click', e => {
+  // ── COG "Open on Map" button ─────────────────────────────────────
+  const cogBtn = e.target.closest('[data-cog-url]');
+  if (cogBtn) {
+    e.stopPropagation();
+    loadCogOnMap(
+      cogBtn.dataset.cogUrl,
+      cogBtn.dataset.cogLabel,
+      cogBtn.dataset.cogAssetId,
+      cogBtn.dataset.cogTitleUnicode
+    );
+    return;
+  }
+
+  // ── Card header expand / collapse ────────────────────────────────
+  const header = e.target.closest('.card-header');
+  if (header) {
+    const card = header.closest('.result-card');
+    if (!card) return;
+    const wasOpen = card.classList.contains('expanded');
+    resultsEl.querySelectorAll('.result-card.expanded')
+      .forEach(c => c.classList.remove('expanded'));
+    if (!wasOpen) {
+      card.classList.add('expanded');
+      if (card._feature) showFootprint(card._feature, true);
+    }
+  }
+
+
+});
 
 // ── COG right-click context menu ──────────────────────────────────
 const _ctxMenu   = document.getElementById('cog-context-menu');
@@ -1771,6 +2130,193 @@ document.addEventListener('click', _dismissCtxMenu);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') _dismissCtxMenu(); });
 map.on('movestart', _dismissCtxMenu);
 map.on('zoomstart', _dismissCtxMenu);
+
+// ═══════════════════════════════════════════════════════════════════
+// GEOCODER  — Nominatim (OSM) place search with debounced autocomplete
+//
+// Flow:
+//   keystroke → 350ms debounce → Nominatim API (NZ-biased) →
+//   dropdown results → select → map.flyTo() + optional imagery query
+//
+// Keyboard: ↑/↓ navigate results, Enter selects, Escape clears.
+// No API key required. Requests are throttled by the debounce so
+// Nominatim's usage policy (max 1 req/sec) is respected.
+// ═══════════════════════════════════════════════════════════════════
+
+(function() {
+  const input      = document.getElementById('geocoder-input');
+  const resultsEl  = document.getElementById('geocoder-results');
+  const clearBtn   = document.getElementById('geocoder-clear');
+  const spinner    = document.getElementById('geocoder-spinner');
+
+  let _debounceTimer = null;
+  let _activeIdx     = -1;   // keyboard-selected result index
+  let _results       = [];   // current Nominatim result set
+  let _currentQuery  = '';   // last dispatched query string
+
+  // ── Nominatim fetch ───────────────────────────────────────────────
+  // Biased to New Zealand via countrycodes=nz and viewbox around NZ.
+  // Results are limited to 6 to keep the dropdown compact.
+  async function fetchPlaces(query) {
+    const params = new URLSearchParams({
+      q:            query,
+      format:       'jsonv2',
+      countrycodes: 'nz',
+      viewbox:      '165,-48,179,-34',  // NZ bounding box (lng1,lat1,lng2,lat2)
+      bounded:      '0',                // 0 = fall back outside viewbox if no NZ result
+      limit:        '6',
+      addressdetails: '1',
+    });
+    const url = `https://nominatim.openstreetmap.org/search?${params}`;
+    const resp = await fetch(url, {
+      headers: { 'Accept-Language': 'en', 'User-Agent': 'mutant.kiwi-imagery-explorer' }
+    });
+    if (!resp.ok) throw new Error('Nominatim HTTP ' + resp.status);
+    return resp.json();
+  }
+
+  // ── Format a Nominatim result into two display lines ─────────────
+  function formatResult(r) {
+    // Primary name: use display_name first segment, or name
+    const parts  = (r.display_name || '').split(',').map(s => s.trim());
+    const name   = parts[0] || r.name || '?';
+    // Detail: next 2 meaningful parts (skip duplicates of name)
+    const detail = parts.slice(1).filter(p => p && p !== name).slice(0, 2).join(', ');
+    return { name, detail };
+  }
+
+  // ── Render dropdown ───────────────────────────────────────────────
+  function renderResults(items) {
+    _results  = items;
+    _activeIdx = -1;
+
+    if (!items.length) {
+      resultsEl.innerHTML = '<div class="geocoder-no-results">No results found</div>';
+      resultsEl.classList.add('visible');
+      return;
+    }
+
+    resultsEl.innerHTML = items.map((r, i) => {
+      const { name, detail } = formatResult(r);
+      return `
+        <div class="geocoder-item" data-idx="${i}">
+          <div class="geocoder-item-name">${escHtml(name)}</div>
+          ${detail ? `<div class="geocoder-item-detail">${escHtml(detail)}</div>` : ''}
+        </div>`;
+    }).join('');
+
+    resultsEl.querySelectorAll('.geocoder-item').forEach(el => {
+      el.addEventListener('mousedown', e => {
+        // mousedown fires before input blur, so we can still read the index
+        e.preventDefault();
+        selectResult(parseInt(el.dataset.idx, 10));
+      });
+    });
+
+    resultsEl.classList.add('visible');
+  }
+
+  // ── Select a result: fly map to it ───────────────────────────────
+  function selectResult(idx) {
+    const r = _results[idx];
+    if (!r) return;
+
+    const { name } = formatResult(r);
+    input.value = name;
+    clearBtn.style.display = 'block';
+    hideResults();
+
+    // Use bounding box if available for a better fit, else point + zoom
+    if (r.boundingbox) {
+      const [s, n, w, e] = r.boundingbox.map(Number);
+      map.fitBounds([[w, s], [e, n]], { padding: 80, maxZoom: 16, duration: 900 });
+    } else {
+      map.flyTo({ center: [parseFloat(r.lon), parseFloat(r.lat)], zoom: 14, duration: 900 });
+    }
+
+    debugInfo(`Geocoder → ${name} [${parseFloat(r.lat).toFixed(4)}, ${parseFloat(r.lon).toFixed(4)}]`);
+  }
+
+  // ── Debounced search trigger ──────────────────────────────────────
+  function scheduleSearch(query) {
+    clearTimeout(_debounceTimer);
+    if (query.length < 2) { hideResults(); return; }
+
+    _debounceTimer = setTimeout(async () => {
+      if (query !== _currentQuery) {
+        _currentQuery = query;
+        spinner.style.display = 'block';
+        try {
+          const items = await fetchPlaces(query);
+          // Discard stale responses if the input has changed since we fired
+          if (query === input.value.trim()) renderResults(items);
+        } catch (err) {
+          debugErr('Geocoder: ' + err.message);
+        } finally {
+          spinner.style.display = 'none';
+        }
+      }
+    }, 350); // 350ms debounce — well within Nominatim's 1 req/sec policy
+  }
+
+  // ── Keyboard navigation ───────────────────────────────────────────
+  function moveActive(dir) {
+    const items = resultsEl.querySelectorAll('.geocoder-item');
+    if (!items.length) return;
+    items[_activeIdx]?.classList.remove('active');
+    _activeIdx = Math.max(0, Math.min(items.length - 1, _activeIdx + dir));
+    items[_activeIdx]?.classList.add('active');
+    items[_activeIdx]?.scrollIntoView({ block: 'nearest' });
+  }
+
+  function hideResults() {
+    resultsEl.classList.remove('visible');
+    resultsEl.innerHTML = '';
+    _results   = [];
+    _activeIdx = -1;
+  }
+
+  // ── Event wiring ──────────────────────────────────────────────────
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+    clearBtn.style.display = q ? 'block' : 'none';
+    scheduleSearch(q);
+  });
+
+  input.addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown')  { e.preventDefault(); moveActive(+1); }
+    if (e.key === 'ArrowUp')    { e.preventDefault(); moveActive(-1); }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (_activeIdx >= 0) selectResult(_activeIdx);
+      else if (_results.length) selectResult(0);
+    }
+    if (e.key === 'Escape') {
+      hideResults();
+      input.blur();
+    }
+  });
+
+  input.addEventListener('blur', () => {
+    // Small delay so mousedown on a result fires first
+    setTimeout(hideResults, 150);
+  });
+
+  input.addEventListener('focus', () => {
+    // Re-show results if there's a previous query still in the box
+    if (input.value.trim().length >= 2 && _results.length) {
+      resultsEl.classList.add('visible');
+    }
+  });
+
+  clearBtn.addEventListener('click', () => {
+    input.value = '';
+    clearBtn.style.display = 'none';
+    hideResults();
+    input.focus();
+  });
+
+})(); // end geocoder IIFE
 
 document.getElementById('cog-overlay-close').onclick = () => removeCogOverlay();
 
