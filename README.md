@@ -4,7 +4,8 @@
 
 A browser-based map viewer for exploring New Zealand's historical aerial and near-infrared photography. Click anywhere on the map to query all imagery series intersecting that location, inspect metadata, and stream Cloud-Optimised GeoTIFFs directly onto the map for visual comparison — all client-side, no backend required.
 
-Also available as a QGOS PlugIn
+Also available as a QGIS PlugIn [https://github.com/MutantKiwi/aerial-image-viewer-qgis](https://github.com/MutantKiwi/aerial-image-viewer-qgis)
+
 ---
 
 ## Features
