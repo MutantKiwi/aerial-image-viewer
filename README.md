@@ -90,24 +90,6 @@ Browser
 
 ---
 
-## Compression Handling
-
-NZ imagery TIFF compression tags **frequently misreport the actual tile encoding**. A 4-byte magic-number probe of the first tile is performed before routing.
-
-| TIFF Tag | Declared | Actual | Decoder |
-|---|---|---|---|
-| 50001 | LERC+Zstd | **WEBP** (`52 49 46 46`) | `readRasters()` native |
-| 50000 | LERC | **ZSTD** (`28 B5 2F FD`) | `readRastersZstd()` + fzstd |
-| 50000 | LERC | LERC | `readRastersLerc()` + LercDecode.js |
-| 50003 | ZSTD | ZSTD | `readRastersZstd()` + fzstd |
-| 5, 8, 34892 | LZW/Deflate/WEBP | As declared | `readRasters()` native |
-
-**NIR ZSTD specifics:** `INTERLEAVE=PIXEL` + `PREDICTOR=2` — undo step must be `nBands × bytesPerSample`. `BitsPerSample` is returned by geotiff.js as a plain object `{0:8, 1:8, ...}` requiring `Object.values()` to parse. Band arrays must be `Uint8Array` for 8-bit data, not `Float32Array`.
-
-See [`COMPRESSION-TIFF-TAG-ISSUES.md`](https://github.com/MutantKiwi/aerial-image-viewer/blob/main/COMPRESSION-TIFF-TAG-ISSUES.md) for full technical detail.
-
----
-
 ## Basemaps
 
 Switched via dropdown below the search bar. All served by the [LINZ Basemaps API](https://basemaps.linz.govt.nz/).
