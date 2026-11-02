@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Aerial Imagery Explorer</title>
+<link rel="icon" type="image/x-icon" href="https://imagery.mutant.kiwi/favicon.ico">
 
 <!-- MapLibre GL JS -->
 <link href="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.css" rel="stylesheet">
@@ -78,13 +79,14 @@ window._zstdReady = new Promise((resolve, reject) => {
     pointer-events: none;
   }
   #header h1 { font-size: 17px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent); }
-  #header .sub { font-family: 'Consolas', 'SF Mono', monospace; font-size: 12px; color: var(--muted); letter-spacing: 0.1em; }
+  #header .sub { font-family: 'Consolas', 'SF Mono', monospace; font-size: 12px; color: #fff; letter-spacing: 0.12em; font-weight: 600; opacity: 0.85; }
 
   #coords-bar {
     position: fixed; bottom: 24px; left: 220px; z-index: 10;
-    font-family: 'Consolas', 'SF Mono', monospace; font-size: 11px; color: var(--muted);
+    font-family: 'Consolas', 'SF Mono', monospace; font-size: 22px; color: var(--muted);
     background: rgba(10,12,15,0.85); border: 1px solid var(--border);
-    padding: 6px 12px; border-radius: 4px; backdrop-filter: blur(8px); transition: color 0.2s;
+    padding: 6px 14px; border-radius: 4px; backdrop-filter: blur(8px); transition: color 0.2s;
+    font-weight: 600; letter-spacing: 0.03em;
   }
   #coords-bar.active { color: var(--accent2); }
 
@@ -240,14 +242,18 @@ window._zstdReady = new Promise((resolve, reject) => {
 
   #instructions {
     position: fixed; top: 155px; left: 24px; z-index: 10;
-    background: rgba(10,12,15,0.85); border: 1px solid var(--border);
-    padding: 8px 14px; border-radius: 5px; backdrop-filter: blur(8px);
-    font-size: 11px; color: var(--muted); line-height: 1.7;
+    background: rgba(0,0,0,0.78);
+    border: 1.5px solid rgba(255,255,255,0.22);
+    padding: 9px 16px; border-radius: 7px;
+    backdrop-filter: blur(14px) saturate(1.4);
+    box-shadow: 0 2px 16px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.05);
+    font-size: 12px; font-weight: 700; color: #ffffff; line-height: 1;
+    letter-spacing: 0.04em;
     pointer-events: none; transition: opacity 0.4s;
-    width: 340px;
+    white-space: nowrap;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.9);
   }
-  #instructions.hidden { opacity: 0; }
-  #instructions span { color: var(--text); }
+  #instructions.hidden { opacity: 0; pointer-events: none; }
 
   #config-btn {
     position: fixed; top: 16px; right: 24px; z-index: 15;
@@ -454,6 +460,102 @@ window._zstdReady = new Promise((resolve, reject) => {
     font-family: 'Consolas', 'SF Mono', monospace; text-align: center;
   }
 
+  /* ── Help side panel ── */
+  #help-panel {
+    position: fixed; top: 0; right: 0; bottom: 0; z-index: 99990;
+    width: 420px; max-width: 90vw;
+    background: rgba(8,10,13,0.98); border-left: 1px solid var(--border);
+    backdrop-filter: blur(16px);
+    box-shadow: -4px 0 32px rgba(0,0,0,0.6);
+    display: flex; flex-direction: column;
+    transform: translateX(100%); transition: transform 0.25s ease;
+    pointer-events: none;
+  }
+  #help-panel.open { transform: translateX(0); pointer-events: all; }
+  #help-panel-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  #help-panel-title {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.15em;
+    text-transform: uppercase; color: var(--accent);
+  }
+  #help-panel-close {
+    width: 28px; height: 28px; border-radius: 4px;
+    border: 1px solid var(--border); background: transparent;
+    color: var(--muted); cursor: pointer; font-size: 14px;
+    display: flex; align-items: center; justify-content: center; transition: all 0.15s;
+  }
+  #help-panel-close:hover { color: #fff; border-color: rgba(255,255,255,0.2); }
+  #help-panel-body {
+    flex: 1; overflow-y: auto; padding: 20px 24px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 13px; line-height: 1.6; color: #ddd;
+    background: rgba(8,10,13,0.98);
+  }
+  #help-panel-body h1 { font-size: 18px; color: #fff; border-bottom: 2px solid #e84070; padding-bottom: 8px; margin-top: 0; }
+  #help-panel-body h2 { font-size: 13px; color: #fff; border-left: 3px solid #e84070; padding-left: 10px; margin-top: 24px; }
+  #help-panel-body h3 { font-size: 12px; color: #aaa; margin-top: 14px; }
+  #help-panel-body a { color: #47c8ff; }
+  #help-panel-body code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 3px; font-size: 11px; font-family: Consolas,monospace; }
+  #help-panel-body table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 12px; }
+  #help-panel-body th { background: rgba(255,255,255,0.06); text-align: left; padding: 5px 10px; }
+  #help-panel-body td { padding: 4px 10px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+  #help-panel-body ul { padding-left: 20px; }
+  #help-panel-body .step { display: flex; align-items: flex-start; gap: 12px; margin: 10px 0; }
+  #help-panel-body .step-num { background: #e84070; color: white; border-radius: 50%; width: 22px; height: 22px; min-width: 22px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: bold; margin-top: 2px; }
+  #help-panel-body .tip { background: rgba(240,168,48,0.1); border-left: 3px solid #f0a830; padding: 8px 12px; margin: 10px 0; border-radius: 0 4px 4px 0; font-size: 12px; }
+  #help-panel-body .new { background: rgba(67,160,71,0.1); border-left: 3px solid #43a047; padding: 8px 12px; margin: 10px 0; border-radius: 0 4px 4px 0; font-size: 12px; }
+  #help-panel-body .kbd { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 3px; padding: 1px 6px; font-family: monospace; font-size: 11px; }
+  #help-panel-body figure { margin: 14px 0; }
+  #help-panel-body figure img { max-width: 100%; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); display: block; }
+  #help-panel-body figcaption { font-size: 11px; color: #888; margin-top: 5px; font-style: italic; }
+  #help-panel-body .tagline { color: #999; font-size: 12px; margin-bottom: 20px; }
+  #help-panel-body .nir { color: #e84070; font-weight: 600; }
+
+  /* ── COG neighbour compass ── */
+  #cog-compass {
+    position: fixed; z-index: 99999; display: none;
+    width: 130px; height: 130px; pointer-events: none;
+  }
+  #cog-compass.visible { display: block; }
+  .compass-ring {
+    position: absolute; inset: 0; border-radius: 50%;
+    background: rgba(0,0,0,0.75); border: 1.5px solid rgba(71,200,255,0.3);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.7);
+    pointer-events: all;
+  }
+  .compass-label {
+    position: absolute; inset: 0; display: flex;
+    align-items: center; justify-content: center;
+    font-size: 9px; color: rgba(255,255,255,0.35);
+    font-family: 'Consolas', monospace; letter-spacing: .05em;
+    pointer-events: none;
+  }
+  .compass-btn {
+    position: absolute; width: 28px; height: 28px;
+    border-radius: 50%; border: 1px solid rgba(71,200,255,0.4);
+    background: rgba(10,15,20,0.9); color: rgba(71,200,255,0.9);
+    font-size: 10px; font-family: 'Consolas', monospace;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: all 0.12s;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    pointer-events: all;
+  }
+  .compass-btn:hover { background: rgba(71,200,255,0.2); color: #fff; border-color: rgba(71,200,255,0.8); transform: scale(1.15); }
+  .compass-btn.loading { opacity: 0.5; cursor: wait; }
+  .compass-btn.unavailable { opacity: 0.2; cursor: not-allowed; pointer-events: none; border-color: rgba(255,255,255,0.1); color: rgba(255,255,255,0.2); }
+  /* Positions: N top-centre, S bottom-centre, E right-centre, W left-centre, NE NW SE SW corners */
+  .cb-n  { top: 4px;  left: 50%; transform: translateX(-50%); }
+  .cb-ne { top: 14px; right: 10px; }
+  .cb-e  { top: 50%;  right: 4px;  transform: translateY(-50%); }
+  .cb-se { bottom: 14px; right: 10px; }
+  .cb-s  { bottom: 4px; left: 50%; transform: translateX(-50%); }
+  .cb-sw { bottom: 14px; left: 10px; }
+  .cb-w  { top: 50%;  left: 4px;  transform: translateY(-50%); }
+  .cb-nw { top: 14px; left: 10px; }
+
   /* ── COG right-click context menu ── */
   #cog-context-menu {
     position: fixed; z-index: 99998; display: none;
@@ -476,39 +578,7 @@ window._zstdReady = new Promise((resolve, reject) => {
   }
   .ctx-item:hover { background: rgba(71,200,255,0.08); color: var(--accent2); }
   .ctx-item-icon { font-size: 13px; flex-shrink: 0; }
-  /* ── Debug window ── */
-  #debug-win {
-    position:fixed; bottom:16px; right:16px; z-index:99999;
-    width:360px; max-width:calc(100vw - 32px);
-    background:rgba(8,10,13,0.97); border:1px solid rgba(255,80,60,0.5);
-    border-radius:6px; font-family:'JetBrains Mono',monospace; font-size:10px;
-    backdrop-filter:blur(8px); box-shadow:0 4px 24px rgba(255,60,40,0.15);
-    user-select:none;
-  }
-  #debug-win.dragging { transition: none; }
-  #debug-titlebar {
-    display:flex; align-items:center; gap:6px; padding:5px 8px;
-    border-bottom:1px solid rgba(255,80,60,0.2); cursor:grab;
-    background:rgba(255,60,40,0.08); border-radius:6px 6px 0 0;
-  }
-  #debug-titlebar:active { cursor:grabbing; }
-  #debug-badge {
-    flex:1; font-size:9px; color:var(--muted);
-    background:rgba(255,255,255,0.08); border-radius:3px; padding:1px 5px;
-  }
-  #debug-clear, #debug-toggle {
-    background:transparent; border:none; color:var(--muted); cursor:pointer;
-    font:10px 'JetBrains Mono',monospace; padding:2px 5px; border-radius:3px;
-    transition:color 0.15s;
-  }
-  #debug-clear:hover, #debug-toggle:hover { color:var(--text); }
-  #debug-body {
-    max-height:200px; overflow-y:auto; padding:4px 0;
-  }
-  #debug-body::-webkit-scrollbar { width:3px; }
-  #debug-body::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); }
-  .debug-row { padding:2px 8px; line-height:1.5; display:flex; gap:6px; word-break:break-all; }
-  .debug-ts { color:rgba(255,255,255,0.2); flex-shrink:0; }
+
 </style>
 </head>
 <body>
@@ -516,9 +586,49 @@ window._zstdReady = new Promise((resolve, reject) => {
 <div id="map"></div>
 
 <div id="header">
-  <div>
-    <h1><span style="color:#ffffff;text-transform:none;letter-spacing:0.05em;font-weight:700">mutant.kiwi</span> Aerial Imagery Explorer</h1>
-    <div class="sub">Click anywhere on the map to query intersecting imagery</div>
+  <div style="display:flex;align-items:center;gap:14px;">
+    <div>
+      <h1><span style="color:#ffffff;text-transform:none;letter-spacing:0.05em;font-weight:700">mutant.kiwi</span> Aerial Imagery Explorer</h1>
+      <div class="sub">621,728 sheets across all of New Zealand</div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;pointer-events:all;">
+      <a href="https://github.com/MutantKiwi/aerial-image-viewer/" target="_blank" rel="noopener"
+         title="View on GitHub"
+         style="display:flex;align-items:center;gap:6px;text-decoration:none;color:rgba(255,255,255,0.75);
+                border:1px solid rgba(255,255,255,0.25);border-radius:5px;padding:5px 10px;
+                font-family:'Consolas','SF Mono',monospace;font-size:10px;letter-spacing:0.05em;
+                backdrop-filter:blur(8px);background:rgba(10,12,15,0.7);
+                transition:color 0.2s,border-color 0.2s;"
+         onmouseover="this.style.color='#fff';this.style.borderColor='rgba(255,255,255,0.5)'"
+         onmouseout="this.style.color='rgba(255,255,255,0.75)';this.style.borderColor='rgba(255,255,255,0.25)'">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482
+                   0-.237-.009-.868-.013-1.703-2.782.605-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.463-1.11-1.463
+                   -.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.832
+                   .092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683
+                   -.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0 1 12 6.836
+                   c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.202 2.394.1 2.647
+                   .64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852
+                   0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.163 22 16.418 22 12
+                   c0-5.523-4.477-10-10-10z"/>
+        </svg>
+        GitHub
+      </a>
+      <a href="https://plugins.qgis.org/plugins/imagery_explorer/" target="_blank" rel="noopener"
+         title="QGIS Plugin"
+         style="display:flex;align-items:center;gap:6px;text-decoration:none;color:rgba(255,255,255,0.75);
+                border:1px solid rgba(255,255,255,0.25);border-radius:5px;padding:5px 10px;
+                font-family:'Consolas','SF Mono',monospace;font-size:10px;letter-spacing:0.05em;
+                backdrop-filter:blur(8px);background:rgba(10,12,15,0.7);
+                transition:color 0.2s,border-color 0.2s;"
+         onmouseover="this.style.color='#fff';this.style.borderColor='rgba(255,255,255,0.5)'"
+         onmouseout="this.style.color='rgba(255,255,255,0.75)';this.style.borderColor='rgba(255,255,255,0.25)'">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+        </svg>
+        QGIS
+      </a>
+    </div>
   </div>
 </div>
 
@@ -552,17 +662,42 @@ window._zstdReady = new Promise((resolve, reject) => {
 
 <div id="coords-bar">— , —</div>
 
-<div id="instructions">
-  <span>Click</span> anywhere on the map to find imagery<br>
-  <span>621,728 sheets</span> across all of New Zealand
-</div>
+<div id="instructions">Click anywhere on the map to find imagery</div>
 
 <button id="config-btn" title="Layer configuration">
   <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
 </button>
 
+<div id="help-panel">
+  <div id="help-panel-header">
+    <span id="help-panel-title">Help</span>
+    <button id="help-panel-close" title="Close help"
+      onclick="document.getElementById('help-panel').classList.remove('open')">✕</button>
+  </div>
+  <div id="help-panel-body"><p style="color:#888;padding:20px">Loading help…</p></div>
+</div>
+
+<div id="cog-compass">
+  <div class="compass-ring"></div>
+  <div class="compass-label">ADD SHEET</div>
+  <button class="compass-btn cb-n"  data-dir="n"  title="Load tile to North">N</button>
+  <button class="compass-btn cb-ne" data-dir="ne" title="Load tile to NE">NE</button>
+  <button class="compass-btn cb-e"  data-dir="e"  title="Load tile to East">E</button>
+  <button class="compass-btn cb-se" data-dir="se" title="Load tile to SE">SE</button>
+  <button class="compass-btn cb-s"  data-dir="s"  title="Load tile to South">S</button>
+  <button class="compass-btn cb-sw" data-dir="sw" title="Load tile to SW">SW</button>
+  <button class="compass-btn cb-w"  data-dir="w"  title="Load tile to West">W</button>
+  <button class="compass-btn cb-nw" data-dir="nw" title="Load tile to NW">NW</button>
+</div>
+
 <div id="cog-context-menu">
   <div class="ctx-header" id="ctx-layer-name"></div>
+  <div class="ctx-item" id="ctx-add-sheets">
+    <span class="ctx-item-icon">✦</span> Add more sheets
+  </div>
+  <div class="ctx-item" id="ctx-share-image">
+    <span class="ctx-item-icon">⤴</span> Share image link
+  </div>
   <a class="ctx-item" id="ctx-download-link" href="#" download>
     <span class="ctx-item-icon">↓</span> Download GeoTIFF
   </a>
@@ -591,6 +726,24 @@ window._zstdReady = new Promise((resolve, reject) => {
       <div id="panel-coords">—</div>
     </div>
     <div id="panel-count"><span class="n" id="count-n">0</span> found</div>
+    <button id="panel-share-btn" title="Share search — copy link to this location"
+       style="display:flex;align-items:center;gap:5px;padding:0 8px;height:28px;
+              border-radius:4px;border:1px solid var(--border);cursor:pointer;
+              color:var(--muted);font-size:10px;font-family:'Consolas',monospace;
+              letter-spacing:0.05em;background:transparent;transition:all 0.15s;flex-shrink:0;"
+       onmouseover="this.style.color='var(--accent2)';this.style.borderColor='rgba(71,200,255,0.4)'"
+       onmouseout="this.style.color='var(--muted)';this.style.borderColor='var(--border)'">
+      <svg width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13"/></svg>
+      Share search
+    </button>
+    <button id="panel-help-btn" title="Help"
+       onclick="_toggleHelpPanel()"
+       style="display:flex;align-items:center;justify-content:center;
+              width:28px;height:28px;border-radius:4px;border:1px solid var(--border);
+              color:#fff;font-size:16px;font-weight:700;cursor:pointer;
+              background:transparent;transition:all 0.15s;flex-shrink:0;"
+       onmouseover="this.style.color='var(--accent2)';this.style.borderColor='rgba(71,200,255,0.4)'"
+       onmouseout="this.style.color='#fff';this.style.borderColor='var(--border)'">?</button>
     <button id="close-btn" title="Close panel">
       <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
@@ -661,9 +814,10 @@ const toWGS84 = (e, n)     => proj4('EPSG:2193', 'EPSG:4326', [e, n]);
 // Spatially indexed with Hilbert R-tree so only features intersecting the
 // click bounding box are fetched via HTTP range requests.
 const MASTER_FGB = 'https://imagery.mutant.kiwi/all_imagery.fgb';
+const LINZ_KEY = 'd01KKYTMZXMFTE56FS0SE8BYXNT';
 
 const CONFIG = {
-  mapStyle: `https://basemaps.linz.govt.nz/v1/styles/topolite-v2.json?api=c01km5nw6fvmeeebaxqf9grm0p4`,
+  mapStyle: `https://basemaps.linz.govt.nz/v1/styles/topolite-v2.json?api=${LINZ_KEY}`,
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -681,6 +835,7 @@ const map = new maplibregl.Map({
 
 map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-left');
 
+
 // ── Compass — rotates with map bearing, click to reset north ─────────────────
 map.on('rotate', () => {
   const arrow = document.getElementById('compass-arrow');
@@ -692,16 +847,62 @@ document.getElementById('compass').addEventListener('click', () => {
 map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
 
 // ── Basemap definitions ───────────────────────────────────────────────────────
-const LINZ_KEY = 'c01km5nw6fvmeeebaxqf9grm0p4';
+
+// ── Silent COG diagnostic logger ─────────────────────────────────────────────
+// Logs one CSV row per COG render attempt to the log bucket.
+// Row format: timestamp,url,compression_tag,magic_bytes,routed_decoder,error
+// Rows are batched in memory and flushed via PUT to S3 every 30 s or on unload.
+// Failures are silent — never shown to the user.
+const COG_LOG = (() => {
+  const LOG_ENDPOINT = 'https://imagery.mutant.kiwi/logs/cog-diagnostics/';
+  const FLUSH_INTERVAL_MS = 30000;
+  let _queue = [];
+  let _sessionId = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+  function _escape(v) {
+    const s = String(v ?? '');
+    return s.includes(',') || s.includes('"') || s.includes('\n')
+      ? '"' + s.replace(/"/g, '""') + '"'
+      : s;
+  }
+
+  function record(url, compressionTag, magicBytes, routedDecoder, error = '') {
+    const ts = new Date().toISOString();
+    const row = [ts, _sessionId, url, compressionTag, magicBytes, routedDecoder, error]
+      .map(_escape).join(',') + '\n';
+    _queue.push(row);
+  }
+
+  async function flush() {
+    if (_queue.length === 0) return;
+    const rows = _queue.splice(0);
+    const header = 'timestamp,session,url,compression_tag,magic_bytes,routed_decoder,error\n';
+    const body = header + rows.join('');
+    const key = `${_sessionId}-${Date.now()}.csv`;
+    try {
+      await fetch(LOG_ENDPOINT + key, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/csv' },
+        body,
+        keepalive: true,
+      });
+    } catch (_) { /* silent */ }
+  }
+
+  setInterval(flush, FLUSH_INTERVAL_MS);
+  window.addEventListener('beforeunload', flush);
+
+  return { record, flush };
+})();
 const BASEMAPS = {
   topo: {
     label: 'NZ Topo Gridless',
-    style: `https://basemaps.linz.govt.nz/v1/tiles/topo-raster/WebMercatorQuad/style/topo-raster.json?api=c01km5nw6fvmeeebaxqf9grm0p4`,
+    style: `https://basemaps.linz.govt.nz/v1/tiles/topo-raster/WebMercatorQuad/style/topo-raster.json?api=${LINZ_KEY}`,
     type: 'raster',
   },
   topolite: {
     label: 'NZ Topo Lite',
-    style: `https://basemaps.linz.govt.nz/v1/styles/topolite-v2.json?api=c01km5nw6fvmeeebaxqf9grm0p4`,
+    style: `https://basemaps.linz.govt.nz/v1/styles/topolite-v2.json?api=${LINZ_KEY}`,
     type: 'vector',
   },
   aerial: {
@@ -711,7 +912,7 @@ const BASEMAPS = {
       sources: {
         'linz-aerial': {
           type: 'raster',
-          tiles: [`https://basemaps.linz.govt.nz/v1/tiles/aerial/WebMercatorQuad/{z}/{x}/{y}.webp?api=c01km5nw6fvmeeebaxqf9grm0p4`],
+          tiles: [`https://basemaps.linz.govt.nz/v1/tiles/aerial/WebMercatorQuad/{z}/{x}/{y}.webp?api=${LINZ_KEY}`],
           tileSize: 256,
           attribution: '© 2024 Toitū Te Whenua Land Information New Zealand',
           maxzoom: 22,
@@ -752,7 +953,7 @@ async function setBasemap(key) {
         if (!map.getLayer(snap.layerId)) {
           map.addLayer({ id: snap.layerId, type: 'raster', source: snap.sourceId,
             layout: { visibility: snap.visible ? 'visible' : 'none' },
-            paint: { 'raster-opacity': snap.opacity, 'raster-fade-duration': 150 } });
+            paint: { 'raster-opacity': snap.opacity, 'raster-fade-duration': 0 } });
         }
       } catch(e) { /* ignore */ }
     });
@@ -770,7 +971,7 @@ document.getElementById('basemap-select').addEventListener('change', e => {
 map.on('mousemove', e => {
   const [E, N] = toNZTM(e.lngLat.lng, e.lngLat.lat);
   document.getElementById('coords-bar').textContent =
-    `E ${Math.round(E)}  N ${Math.round(N)}`;
+    `NZTM  E ${Math.round(E)}  N ${Math.round(N)}`;
 });
 
 // Places an animated pulse marker at the last-clicked map position.
@@ -797,22 +998,12 @@ const panelCoord = document.getElementById('panel-coords');
 // when the user clicks a new location.
 let currentQuery = null;
 
-// Slides the debug panel left when the results panel is open,
-// so they don't overlap. Skipped if the user has manually dragged it.
-function _shiftDebug(panelOpen) {
-  const dbg = document.getElementById('debug-win');
-  if (!dbg || dbg._dragged) return;
-  dbg.style.right = panelOpen ? 'calc(var(--panel-w) + 16px)' : '16px';
-}
-
-// Show/hide the results side panel and shift debug window accordingly.
+// Show/hide the results side panel.
 function openPanel()  {
   panel.classList.add('open');
-  _shiftDebug(true);
 }
 function closePanel() {
   panel.classList.remove('open');
-  _shiftDebug(false);
 }
 
 // ── Panel resize (drag left edge) ─────────────────────────────────────────────
@@ -910,120 +1101,21 @@ function reprojectGeom(geom) {
 // ═══════════════════════════════════════════════════════════════════
 // DEBUG WINDOW
 // ═══════════════════════════════════════════════════════════════════
-// Ring buffer of debug log entries (max 200). Each entry: { ts, level, msg }.
-// Displayed in the floating debug panel (bottom-right, red border).
-const _debugEntries = [];
-let _debugVisible = true;
-
-// Build and inject the debug panel DOM. Called on DOMContentLoaded.
-// The panel shows timestamped log entries with colour-coded severity.
-function _buildDebugUI() {
-  const el = document.createElement('div');
-  el.id = 'debug-win';
-  el.innerHTML = `
-    <div id="debug-titlebar">
-      <span style="color:#ff4f3b;font-weight:700;letter-spacing:.1em">DEBUG</span>
-      <span id="debug-badge">0</span>
-      <button id="debug-clear" title="Clear">✕ clear</button>
-      <button id="debug-toggle" title="Minimise">▾</button>
-    </div>
-    <div id="debug-body"></div>`;
-  document.body.appendChild(el);
-  document.getElementById('debug-clear').onclick  = () => { _debugEntries.length = 0; _renderDebug(); };
-  document.getElementById('debug-toggle').onclick = () => {
-    _debugVisible = !_debugVisible;
-    document.getElementById('debug-body').style.display = _debugVisible ? 'block' : 'none';
-    document.getElementById('debug-toggle').textContent = _debugVisible ? '▾' : '▸';
-  };
-
-  // ── Drag to reposition ───────────────────────────────────────────
-  (function() {
-    const titlebar = document.getElementById('debug-titlebar');
-    let dragging = false, ox = 0, oy = 0;
-
-    titlebar.addEventListener('mousedown', e => {
-      if (e.target.closest('button')) return; // don't drag when clicking buttons
-      dragging = true;
-      const rect = el.getBoundingClientRect();
-      ox = e.clientX - rect.left;
-      oy = e.clientY - rect.top;
-      el.classList.add('dragging');
-      // Switch from right/bottom anchoring to left/top so drag coords work
-      el.style.right  = 'auto';
-      el.style.bottom = 'auto';
-      el.style.left   = rect.left + 'px';
-      el.style.top    = rect.top  + 'px';
-      el._dragged = true;
-      e.preventDefault();
-    });
-
-    document.addEventListener('mousemove', e => {
-      if (!dragging) return;
-      const x = Math.min(window.innerWidth  - el.offsetWidth,  Math.max(0, e.clientX - ox));
-      const y = Math.min(window.innerHeight - el.offsetHeight, Math.max(0, e.clientY - oy));
-      el.style.left = x + 'px';
-      el.style.top  = y + 'px';
-    });
-
-    document.addEventListener('mouseup', () => {
-      dragging = false;
-      el.classList.remove('dragging');
-    });
-  })();
-}
-
-// Re-render the debug panel body from _debugEntries.
-// Updates the badge count and highlights error count in red.
-function _renderDebug() {
-  const body  = document.getElementById('debug-body');
-  const badge = document.getElementById('debug-badge');
-  if (!body) return;
-  const errors = _debugEntries.filter(e => e.level === 'error').length;
-  badge.textContent = _debugEntries.length + (errors ? ' · ' + errors + ' err' : '');
-  badge.style.background = errors ? 'rgba(255,107,71,0.3)' : 'rgba(255,255,255,0.08)';
-  body.innerHTML = _debugEntries.slice(0, 60).map(e => {
-    const col = e.level === 'error' ? '#ff6b47' : e.level === 'warn' ? '#e8ff47' : '#a0aec0';
-    return `<div class="debug-row" style="color:${col}"><span class="debug-ts">${e.ts}</span><span>${escHtml(e.msg)}</span></div>`;
-  }).join('');
-}
-
-// Core log function. Adds an entry to _debugEntries, forwards errors
-// to Sentry, and re-shows the debug panel if it was minimised.
-// @param {string} msg   - Message text
-// @param {string} level - 'info' | 'warn' | 'error'
+// Debug logging — silent (console only + Sentry for errors).
+// Panel removed from production build.
 function debugLog(msg, level) {
-  const lvl = level || (msg.startsWith('ERR') || msg.startsWith('\u26a0') ? 'error' : 'warn');
-  const ts  = new Date().toTimeString().slice(0,8);
-  console[lvl === 'error' ? 'error' : 'warn']('[DBG]', msg);
-  _debugEntries.unshift({ ts, level: lvl, msg });
-  if (_debugEntries.length > 200) _debugEntries.pop();
-  // Forward errors to Sentry
+  const lvl = level || (msg.startsWith('ERR') ? 'error' : 'info');
+  console[lvl === 'error' ? 'error' : 'log']('[DBG]', msg);
   if (lvl === 'error' && typeof Sentry !== 'undefined') {
     Sentry.captureMessage(msg, 'error');
   }
-  // Re-show debug window on new log entry
-  const dbg = document.getElementById('debug-win');
-  if (dbg) {
-    dbg.style.display = 'block';
-    _debugVisible = true;
-    const body = document.getElementById('debug-body');
-    if (body) body.style.display = 'block';
-    const tog = document.getElementById('debug-toggle');
-    if (tog) tog.textContent = '▾';
-  }
-  _renderDebug();
 }
-
-// Convenience wrappers for the two most common log levels.
 function debugInfo(msg) { debugLog(msg, 'info'); }
 function debugErr(msg)  { debugLog(msg, 'error'); }
 
-// Intercept console.error/warn globally so all library errors (MapLibre,
-// GeoTIFF.js, etc.) also appear in the debug panel and are forwarded
-// to Sentry. The _dbgInProgress flag prevents infinite recursion.
+// Intercept console.error globally so library errors reach Sentry.
 let _dbgInProgress = false;
 const _origError = console.error.bind(console);
-const _origWarn  = console.warn.bind(console);
 console.error = (...args) => {
   _origError(...args);
   if (_dbgInProgress) return;
@@ -1031,17 +1123,6 @@ console.error = (...args) => {
   try { debugLog(args.map(a => (a instanceof Error ? a.message : String(a))).join(' '), 'error'); }
   finally { _dbgInProgress = false; }
 };
-console.warn = (...args) => {
-  _origWarn(...args);
-  if (_dbgInProgress || args[0] === '[DBG]') return;
-  const msg = args[0];
-  if (typeof msg === 'string' && (msg.includes('could not be loaded') || msg.includes('styleimagemissing') || msg.includes('addImage'))) return;
-  _dbgInProgress = true;
-  try { debugLog(args.map(a => (a instanceof Error ? a.message : String(a))).join(' '), 'warn'); }
-  finally { _dbgInProgress = false; }
-};
-
-document.addEventListener('DOMContentLoaded', _buildDebugUI);
 
 // Test whether a NZTM2000 point (lng=easting, lat=northing) falls
 // inside a GeoJSON feature's polygon or multipolygon geometry.
@@ -1065,6 +1146,66 @@ function pointInPolygon(x, y, ring) {
     }
   }
   return inside;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// RESULTS RENDERER
+// ═══════════════════════════════════════════════════════════════════
+// Renders sorted feature list into the results panel grouped by region.
+// Extracted as a named function so it can be called from both the
+// map click handler and the URL hash restore path.
+function _renderResults(features) {
+  resultsEl.innerHTML = '';
+  const total = features.length;
+
+  if (total === 0) {
+    resultsEl.innerHTML = `
+      <div class="state-msg">
+        <p>No imagery found at this location.</p>
+      </div>`;
+    return;
+  }
+
+  // Group by region
+  const groups = new Map();
+  for (const f of features) {
+    const r     = (f.properties.region || 'new-zealand').toLowerCase();
+    const title = (f.properties.title || '').toLowerCase();
+    const key   = (r === 'new-zealand' && title.includes('satellite')) ? '__satellite__' : r;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(f);
+  }
+
+  // Sort: regional groups alphabetical first, satellite last
+  const sorted = [...groups.entries()].sort(([a], [b]) => {
+    if (a === '__satellite__') return 1;
+    if (b === '__satellite__') return -1;
+    return a.localeCompare(b);
+  });
+
+  function groupLabel(key) {
+    if (key === '__satellite__') return 'NEW ZEALAND SATELLITE IMAGERY';
+    return key.replace(/-/g, ' ').toUpperCase() + ' AERIAL IMAGERY';
+  }
+
+  let cardIndex = 1;
+  for (const [key, regionFeatures] of sorted) {
+    const group = document.createElement('div');
+    group.className = 'region-group';
+    const header = document.createElement('div');
+    header.className = 'region-group-header';
+    header.innerHTML = `
+      <span class="region-group-name">${escHtml(groupLabel(key))}</span>
+      <span class="region-group-count">${regionFeatures.length}</span>
+      <svg class="region-group-chevron" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>`;
+    header.addEventListener('click', () => group.classList.toggle('collapsed'));
+    const body = document.createElement('div');
+    body.className = 'region-group-body';
+    group.appendChild(header);
+    group.appendChild(body);
+    resultsEl.appendChild(group);
+    for (const f of regionFeatures) appendCard(f, cardIndex++, body);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1119,65 +1260,13 @@ map.on('click', async e => {
   });
 
   window._lastResults = features;
-  const total = features.length;
-  countEl.textContent = total;
-
-  // Show limit slider when there are more than 10 results
-  // ── Group by region ───────────────────────────────────────────────
-  // Satellite imagery (region=new-zealand + title contains Satellite) → own group at bottom.
-  // All other features grouped by region, alphabetical, aerial imagery label.
-  const groups = new Map();
-  for (const f of features) {
-    const r     = (f.properties.region || 'new-zealand').toLowerCase();
-    const title = (f.properties.title || '').toLowerCase();
-    const key   = (r === 'new-zealand' && title.includes('satellite')) ? '__satellite__' : r;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(f);
-  }
-
-  // Sort: regional groups alphabetical first, satellite last
-  const sorted = [...groups.entries()].sort(([a], [b]) => {
-    if (a === '__satellite__') return 1;
-    if (b === '__satellite__') return -1;
-    return a.localeCompare(b);
-  });
-
-  function groupLabel(key, regionFeatures) {
-    if (key === '__satellite__') return 'NEW ZEALAND SATELLITE IMAGERY';
-    const name = key.replace(/-/g, ' ').toUpperCase();
-    return name + ' AERIAL IMAGERY';
-  }
-
-  let cardIndex = 1;
-  for (const [key, regionFeatures] of sorted) {
-    const displayName = groupLabel(key, regionFeatures);
-    const group = document.createElement('div');
-    group.className = 'region-group';
-
-    const header = document.createElement('div');
-    header.className = 'region-group-header';
-    header.innerHTML = `
-      <span class="region-group-name">${escHtml(displayName)}</span>
-      <span class="region-group-count">${regionFeatures.length}</span>
-      <svg class="region-group-chevron" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>`;
-    header.addEventListener('click', () => group.classList.toggle('collapsed'));
-
-    const body = document.createElement('div');
-    body.className = 'region-group-body';
-    group.appendChild(header);
-    group.appendChild(body);
-    resultsEl.appendChild(group);
-
-    for (const f of regionFeatures) {
-      appendCard(f, cardIndex++, body);
-    }
-  }
-  const found = total;
+  countEl.textContent = features.length;
+  _renderResults(features);
 
   progressEl.style.width = '100%';
   setTimeout(() => { progressEl.style.width = '0'; }, 600);
 
-  if (found === 0 && !token.cancelled) {
+  if (features.length === 0 && !token.cancelled) {
     resultsEl.innerHTML = `
       <div class="state-msg">
         <svg width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
@@ -1252,6 +1341,11 @@ function appendCard(feature, index, container) {
           data-cog-asset-id="${escHtml(props.asset_id || '')}">
           <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
           Open on Map
+        </button>
+        <button class="btn btn-secondary"
+          onclick="copyToClipboard('${escHtml(imageUrl)}', this)">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          Copy URL
         </button>
 ` : ''}
 
@@ -1789,6 +1883,7 @@ async function loadCogOnMap(url, label, assetId, titleUnicode) {
 // Other compression failures are re-thrown as fatal errors.
 async function readRastersWithFallback(tiff, image, opts) {
   const compression = image.fileDirectory && image.fileDirectory.Compression;
+  const url = tiff._sourceUrl || '';
 
   // Compression 50000/50001 — probe first tile to detect actual format.
   // NZ imagery frequently lies: tag says LERC but tiles are WEBP or ZSTD.
@@ -1802,19 +1897,27 @@ async function readRastersWithFallback(tiff, image, opts) {
       if (firstBc > 0) {
         const probe  = await fetch(tiff._sourceUrl, { headers: { Range: 'bytes=' + firstOff + '-' + (firstOff + 3) } });
         const hdr    = new Uint8Array(await probe.arrayBuffer());
+        const magic  = Array.from(hdr).map(b => b.toString(16).padStart(2,'0')).join(' ');
         const isWebp = hdr[0] === 0x52 && hdr[1] === 0x49 && hdr[2] === 0x46 && hdr[3] === 0x46;
         const isZstd = hdr[0] === 0x28 && hdr[1] === 0xB5 && hdr[2] === 0x2F && hdr[3] === 0xFD;
         if (isWebp) {
           debugInfo('Comp 50000 — tiles are WEBP, using standard decoder');
+          COG_LOG.record(url, compression, magic, 'webp-mislabelled');
           return await image.readRasters({ ...opts });
         }
         if (isZstd) {
           debugInfo('Comp 50000 — tiles are ZSTD, using ZSTD decoder');
+          COG_LOG.record(url, compression, magic, 'zstd-mislabelled');
           const { pool: _p, ...safeOpts } = opts;
           return await readRastersZstd(tiff, image, safeOpts);
         }
+        COG_LOG.record(url, compression, magic, 'lerc-probed');
+      } else {
+        COG_LOG.record(url, compression, '', 'lerc-no-tiles');
       }
-    } catch(probeErr) { /* probe failed, fall through to LERC */ }
+    } catch(probeErr) {
+      COG_LOG.record(url, compression, '', 'lerc-probe-failed', probeErr.message);
+    }
     debugInfo('LERC compression (' + compression + ') — using LERC decoder');
     const { pool: _p, ...safeOpts } = opts;
     return await readRastersLerc(tiff, image, safeOpts);
@@ -1823,17 +1926,23 @@ async function readRastersWithFallback(tiff, image, opts) {
   // Explicit ZSTD tag
   if (compression === 50003) {
     debugInfo('ZSTD compression — using ZSTD decoder');
+    COG_LOG.record(url, compression, '', 'zstd');
     const { pool: _p, ...safeOpts } = opts;
     return await readRastersZstd(tiff, image, safeOpts);
   }
 
   // WEBP/LZW/Deflate/JPEG — try single-thread first (reliable), Pool as fallback.
   try {
-    return await image.readRasters({ ...opts });
+    const result = await image.readRasters({ ...opts });
+    COG_LOG.record(url, compression, '', 'native');
+    return result;
   } catch (err) {
     try {
-      return await image.readRasters({ ...opts, pool: cogPool });
+      const result = await image.readRasters({ ...opts, pool: cogPool });
+      COG_LOG.record(url, compression, '', 'native-pool-fallback');
+      return result;
     } catch (err2) {
+      COG_LOG.record(url, compression, '', 'native-failed', err2.message);
       debugErr('readRasters failed: ' + err2.message.slice(0, 80));
       throw err2;
     }
@@ -2044,6 +2153,7 @@ async function renderOneCog(cog) {
     const vp  = map.getBounds();
     const vpW = map.getCanvas().width;
     const vpH = map.getCanvas().height;
+
     const [vpMinE, vpMinN] = toNZTM(vp.getWest(), vp.getSouth());
     const [vpMaxE, vpMaxN] = toNZTM(vp.getEast(), vp.getNorth());
 
@@ -2131,8 +2241,9 @@ async function renderOneCog(cog) {
     } else {
       map.addSource(cog.sourceId, { type: 'image', url: blobUrl, coordinates: coords });
       map.addLayer({ id: cog.layerId, type: 'raster', source: cog.sourceId,
-        paint: { 'raster-opacity': cog.opacity !== undefined ? cog.opacity : 0.9, 'raster-fade-duration': 150 } });
+        paint: { 'raster-opacity': cog.opacity !== undefined ? cog.opacity : 0.9, 'raster-fade-duration': 0 } });
       map.on('contextmenu', cog.layerId, window._onCogContextMenu);
+      if (window._registerCompassForLayer) window._registerCompassForLayer(cog.layerId, cog.url);
     }
     // Mark done on first successful render only
     if (cog.status !== 'done') { cog.status = 'done'; _updateCogBar(); }
@@ -2211,6 +2322,24 @@ function _showCogContextMenu(cogEntry, clientX, clientY) {
   _ctxName.textContent = cogEntry.label;
   _ctxDlLink.href      = '#';
   _ctxDlLink.onclick   = e => { e.preventDefault(); blobDownload(cogEntry.url, _cogDownloadName(cogEntry)); };
+
+  // Wire up 'Add more sheets' — shows compass anchored near cursor
+  const addBtn = document.getElementById('ctx-add-sheets');
+  addBtn.onclick = e => {
+    e.stopPropagation();
+    _dismissCtxMenu();
+    // Defer so document click handler (which dismisses compass) fires first
+    setTimeout(() => _showCompassForEntry(cogEntry, clientX, clientY), 10);
+  };
+
+  // Wire up 'Share image link'
+  const shareImageBtn = document.getElementById('ctx-share-image');
+  shareImageBtn.onclick = e => {
+    e.stopPropagation();
+    _dismissCtxMenu();
+    _shareCogLink(cogEntry);
+  };
+
   // Position near cursor, nudge inward if it would overflow
   _ctxMenu.style.left = '0px'; _ctxMenu.style.top = '0px';
   _ctxMenu.classList.add('visible');
@@ -2255,6 +2384,293 @@ document.addEventListener('click', _dismissCtxMenu);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') _dismissCtxMenu(); });
 map.on('movestart', _dismissCtxMenu);
 map.on('zoomstart', _dismissCtxMenu);
+
+// ── Help panel ───────────────────────────────────────────────────────────────
+let _helpLoaded = false;
+function _toggleHelpPanel() {
+  const panel = document.getElementById('help-panel');
+  const isOpen = panel.classList.contains('open');
+  if (isOpen) {
+    panel.classList.remove('open');
+    return;
+  }
+  panel.classList.add('open');
+  if (_helpLoaded) return;
+  // Fetch help content and inject into the panel body
+  fetch('https://imagery.mutant.kiwi/help.html')
+    .then(r => r.text())
+    .then(html => {
+      // Extract just the body content
+      const match = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+      const body = match ? match[1] : html;
+      document.getElementById('help-panel-body').innerHTML = body;
+      _helpLoaded = true;
+    })
+    .catch(() => {
+      document.getElementById('help-panel-body').innerHTML =
+        '<p style="padding:20px;color:#888">Could not load help. <a href="https://imagery.mutant.kiwi/help.html" target="_blank" style="color:#47c8ff">Open in new tab →</a></p>';
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SHARE — URL hash encoding for map state and COG links
+// ═══════════════════════════════════════════════════════════════════
+//
+// Two share modes:
+//   Share search  — encodes map centre + zoom + auto-query flag
+//     hash: #lng,lat,Xz&q=1
+//   Share image   — encodes map centre + zoom + specific COG asset
+//     hash: #lng,lat,Xz&cog=titleUnicode/assetId
+//
+// On page load the hash is parsed and state is restored.
+
+function _buildShareUrl(extraParams) {
+  const centre = map.getCenter();
+  const zoom   = map.getZoom().toFixed(2);
+  const lng    = centre.lng.toFixed(6);
+  const lat    = centre.lat.toFixed(6);
+  let hash     = `${lng},${lat},${zoom}z`;
+  if (extraParams) hash += '&' + extraParams;
+  return window.location.origin + window.location.pathname + '#' + hash;
+}
+
+function _shareUrl(url, label) {
+  navigator.clipboard.writeText(url).then(() => {
+    // Show toast notification
+    const toast = document.createElement('div');
+    toast.textContent = '✓ ' + label + ' copied to clipboard';
+    toast.style.cssText = [
+      'position:fixed', 'bottom:80px', 'left:50%', 'transform:translateX(-50%)',
+      'background:rgba(10,15,20,0.95)', 'color:#fff', 'font-size:12px',
+      'padding:8px 18px', 'border-radius:20px', 'z-index:999999',
+      'border:1px solid rgba(71,200,255,0.3)', 'font-family:Consolas,monospace',
+      'box-shadow:0 4px 16px rgba(0,0,0,0.5)', 'pointer-events:none',
+      'transition:opacity 0.3s',
+    ].join(';');
+    document.body.appendChild(toast);
+    setTimeout(() => { toast.style.opacity = '0'; }, 1800);
+    setTimeout(() => toast.remove(), 2200);
+  }).catch(() => {
+    prompt('Copy this link:', url);
+  });
+}
+
+// Share search — encodes current map position + auto-query at click point
+function _shareSearch() {
+  const url = _buildShareUrl('q=1');
+  _shareUrl(url, 'Search link');
+}
+
+// Share a specific COG image — encodes position + COG identity
+function _shareCogLink(cogEntry) {
+  const id  = cogEntry.titleUnicode
+    ? encodeURIComponent(cogEntry.titleUnicode) + '/' + encodeURIComponent(cogEntry.assetId || '')
+    : encodeURIComponent(cogEntry.url);
+  const url = _buildShareUrl('cog=' + id);
+  _shareUrl(url, 'Image link');
+}
+
+// Wire panel share button
+document.getElementById('panel-share-btn').onclick = () => _shareSearch();
+
+// ── Parse hash on load and restore state ─────────────────────────────────────
+(function _restoreFromHash() {
+  const hash = window.location.hash.slice(1);
+  if (!hash) return;
+
+  // Parse: lng,lat,Xz[&key=val&...]
+  const [pos, ...kvParts] = hash.split('&');
+  const posMatch = pos.match(/^(-?[\d.]+),(-?[\d.]+),([\d.]+)z$/);
+  if (!posMatch) return;
+
+  const lng  = parseFloat(posMatch[1]);
+  const lat  = parseFloat(posMatch[2]);
+  const zoom = parseFloat(posMatch[3]);
+
+  // Fly to position once map is ready
+  map.once('load', () => {
+    map.flyTo({ center: [lng, lat], zoom, duration: 800 });
+
+    const params = Object.fromEntries(kvParts.map(p => {
+      const [k, ...v] = p.split('=');
+      return [k, decodeURIComponent(v.join('='))];
+    }));
+
+    // Auto-query: simulate a map click at the stored position
+    if (params.q) {
+      map.once('moveend', () => {
+        // Trigger imagery query at restored location
+        const lngLat = { lng, lat };
+        placeMarker(lngLat);
+        document.getElementById('instructions').classList.add('hidden');
+        panelCoord.textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+        countEl.textContent = '…';
+        resultsEl.innerHTML = '';
+        openPanel();
+        resultsEl.innerHTML = `<div class="state-msg"><div class="spinner"></div><p>Searching <strong>621,728</strong> imagery sheets…</p></div>`;
+        progressEl.style.width = '0%';
+        window._lastResults = [];
+        const token = { cancelled: false };
+        currentQuery = token;
+        progressEl.style.width = '40%';
+        queryFlatGeobuf(lng, lat, token).then(features => {
+          if (token.cancelled) return;
+          progressEl.style.width = '90%';
+          features.sort((a, b) => {
+            const ya = (a.properties.year || '').split('-')[0] || '0';
+            const yb = (b.properties.year || '').split('-')[0] || '0';
+            return parseInt(yb) - parseInt(ya);
+          });
+          window._lastResults = features;
+          countEl.textContent = features.length;
+          _renderResults(features);
+          progressEl.style.width = '100%';
+          setTimeout(() => { progressEl.style.width = '0'; }, 600);
+        });
+      });
+    }
+
+    // COG link: load a specific image by titleUnicode/assetId
+    if (params.cog) {
+      map.once('moveend', () => {
+        // Search master FGB for matching asset
+        const [titleUnicode, assetId] = params.cog.split('/');
+        const [e, n] = toNZTM(lng, lat);
+        const d = 50000;
+        const rect = { minX: e-d, minY: n-d, maxX: e+d, maxY: n+d };
+        (async () => {
+          for await (const feat of flatgeobuf.deserialize(MASTER_FGB, rect)) {
+            const p = feat.properties || {};
+            if (titleUnicode && (p.title_unicode || '') !== titleUnicode) continue;
+            if (assetId && (p.asset_id || p.assest_id || '') !== assetId) continue;
+            const url = p.asset_url_image || '';
+            if (!url) continue;
+            loadCogOnMap(url, p.title || titleUnicode, p.asset_id || '', p.title_unicode || '');
+            return;
+          }
+        })();
+      });
+    }
+  });
+})();
+
+// ── COG neighbour compass ─────────────────────────────────────────────────────
+// Activated via right-click context menu "Add more sheets".
+// Probes all 8 directions for same-series neighbours; greys out missing ones.
+// Escape key or successful load dismisses the compass.
+(function() {
+  const compass  = document.getElementById('cog-compass');
+  const HALF     = 65;
+  let _cogEntry  = null;  // currently active cogMap entry
+  let _probeCache = {};   // url+dir -> bool
+
+  const DIR_OFFSETS = {
+    n:  [ 0,    1.0], ne: [ 1.0,  1.0], e:  [ 1.0,  0  ], se: [ 1.0, -1.0],
+    s:  [ 0,   -1.0], sw: [-1.0, -1.0], w:  [-1.0,  0  ], nw: [-1.0,  1.0],
+  };
+
+  // Probe one direction — STRICT: must match titleUnicode exactly
+  async function probeDir(cog, dir) {
+    const key = cog.url + ':' + dir;
+    if (key in _probeCache) return _probeCache[key];
+    const [dE, dN] = DIR_OFFSETS[dir];
+    const spanE = cog.maxE - cog.minE, spanN = cog.maxN - cog.minN;
+    const cE = (cog.minE + cog.maxE) / 2, cN = (cog.minN + cog.maxN) / 2;
+    const tE = cE + dE * spanE, tN = cN + dN * spanN;
+    const pad = Math.min(spanE, spanN) * 0.45;
+    const rect = { minX: tE-pad, minY: tN-pad, maxX: tE+pad, maxY: tN+pad };
+    let found = false;
+    try {
+      for await (const feat of flatgeobuf.deserialize(MASTER_FGB, rect)) {
+        const p = feat.properties || {};
+        if (!p.asset_url_image) continue;
+        // STRICT same-series check
+        if (!cog.titleUnicode || (p.title_unicode || '') !== cog.titleUnicode) continue;
+        if (_cogMap.has(p.asset_url_image)) continue; // already loaded
+        found = true; break;
+      }
+    } catch(_) {}
+    _probeCache[key] = found;
+    return found;
+  }
+
+  async function updateButtonStates(cog) {
+    const btns = [...compass.querySelectorAll('.compass-btn')];
+    btns.forEach(b => { b.classList.remove('unavailable'); });
+    const results = await Promise.all(btns.map(b => probeDir(cog, b.dataset.dir)));
+    btns.forEach((b, i) => { if (!results[i]) b.classList.add('unavailable'); });
+  }
+
+  // Public — called from context menu
+  window._showCompassForEntry = function(cogEntry, clientX, clientY) {
+    _cogEntry  = cogEntry;
+    _probeCache = {};
+    // Reset button states
+    compass.querySelectorAll('.compass-btn').forEach(b => b.classList.remove('unavailable', 'loading'));
+    // Position centred near right-click point
+    const cx = Math.max(4, Math.min(window.innerWidth  - HALF*2 - 4, clientX - HALF));
+    const cy = Math.max(4, Math.min(window.innerHeight - HALF*2 - 4, clientY - HALF));
+    compass.style.left = cx + 'px';
+    compass.style.top  = cy + 'px';
+    compass.classList.add('visible');
+    updateButtonStates(cogEntry);
+  };
+
+  function hideCompass() {
+    compass.classList.remove('visible');
+    _cogEntry = null;
+  }
+
+  // Escape closes compass (and help panel)
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      hideCompass();
+      document.getElementById('help-panel').classList.remove('open');
+    }
+  });
+
+  // Click outside compass dismisses it
+  document.addEventListener('click', e => {
+    if (!compass.contains(e.target)) hideCompass();
+  });
+
+  async function loadNeighbour(dir) {
+    const cog = _cogEntry;
+    if (!cog || !cog.titleUnicode) return;
+    const [dE, dN] = DIR_OFFSETS[dir];
+    const spanE = cog.maxE - cog.minE, spanN = cog.maxN - cog.minN;
+    const cE = (cog.minE + cog.maxE) / 2, cN = (cog.minN + cog.maxN) / 2;
+    const tE = cE + dE * spanE, tN = cN + dN * spanN;
+    const pad = Math.min(spanE, spanN) * 0.45;
+    const rect = { minX: tE-pad, minY: tN-pad, maxX: tE+pad, maxY: tN+pad };
+    const btn = compass.querySelector('[data-dir="' + dir + '"]');
+    if (btn) btn.classList.add('loading');
+    hideCompass();
+    try {
+      for await (const feat of flatgeobuf.deserialize(MASTER_FGB, rect)) {
+        const p   = feat.properties || {};
+        const url = p.asset_url_image || '';
+        if (!url) continue;
+        if (_cogMap.has(url)) continue;
+        // STRICT same-series — must match titleUnicode exactly
+        if ((p.title_unicode || '') !== cog.titleUnicode) continue;
+        loadCogOnMap(url, p.title || cog.label, p.asset_id || p.assest_id || '', p.title_unicode);
+        return;
+      }
+    } catch(err) {
+      debugErr('Compass: ' + err.message);
+    } finally {
+      if (btn) btn.classList.remove('loading');
+    }
+  }
+
+  compass.querySelectorAll('.compass-btn').forEach(btn => {
+    btn.addEventListener('click', e => { e.stopPropagation(); loadNeighbour(btn.dataset.dir); });
+  });
+
+  // No mousemove trigger — compass only activates via right-click menu
+  window._registerCompassForLayer = function(layerId, cogUrl) {};
+})();
 
 // ═══════════════════════════════════════════════════════════════════
 // GEOCODER  — Nominatim (OSM) place search with debounced autocomplete
