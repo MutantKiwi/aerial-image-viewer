@@ -81,14 +81,20 @@ window._zstdReady = new Promise((resolve, reject) => {
   #header h1 { font-size: 17px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent); }
   #header .sub { font-family: 'Consolas', 'SF Mono', monospace; font-size: 12px; color: #fff; letter-spacing: 0.12em; font-weight: 600; opacity: 0.85; }
 
+  /* Cursor position — sits under the basemap selector, or under the
+     photo fit panel when that is open. Styled to match the selectors. */
   #coords-bar {
-    position: fixed; bottom: 24px; left: 220px; z-index: 10;
-    font-family: 'Consolas', 'SF Mono', monospace; font-size: 22px; color: var(--muted);
-    background: rgba(10,12,15,0.85); border: 1px solid var(--border);
-    padding: 6px 14px; border-radius: 4px; backdrop-filter: blur(8px); transition: color 0.2s;
-    font-weight: 600; letter-spacing: 0.03em;
+    position: fixed; top: 240px; left: 24px; z-index: 15;
+    width: 340px; box-sizing: border-box;
+    background: rgba(10,12,15,0.92); border: 1px solid var(--border);
+    border-radius: 5px; backdrop-filter: blur(10px);
+    padding: 8px 12px; color: var(--text); font-size: 12px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    transition: color 0.2s, top 0.25s cubic-bezier(0.16,1,0.3,1);
   }
   #coords-bar.active { color: var(--accent2); }
+  /* While the fit panel is open, positionCoordsBar() overrides `top`
+     with the panel's measured bottom edge. */
 
   #panel {
     position: fixed; top: 0; right: 0; bottom: 0; z-index: 20;
@@ -199,6 +205,19 @@ window._zstdReady = new Promise((resolve, reject) => {
   }
   .card-info { flex: 1; min-width: 0; }
   .card-layer { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* Source badge — which archive a result came from */
+  .src-tag {
+    display: inline-block; vertical-align: middle;
+    font-size: 9px; font-weight: 700; letter-spacing: 0.06em;
+    line-height: 1; padding: 3px 5px; border-radius: 3px;
+    margin-right: 6px; text-transform: uppercase;
+  }
+  .src-linz { background: var(--accent); color: #12151a; }
+  .src-retro { background: var(--accent2); color: #12151a; }
+  .src-topo { background: #b98cff; color: #12151a; }
+  .region-group-name.topo { color: #b98cff; }
+  .region-group-name.linz  { color: var(--accent); }
+  .region-group-name.retro { color: var(--accent2); }
   .card-feat { font-family: 'Consolas', 'SF Mono', monospace; font-size: 10px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .card-chevron { color: var(--muted); transition: transform 0.25s; flex-shrink: 0; }
   .result-card.expanded .card-chevron { transform: rotate(180deg); }
@@ -366,8 +385,140 @@ window._zstdReady = new Promise((resolve, reject) => {
     position: fixed; top: 64px; left: 24px; z-index: 15;
     width: 340px;
   }
-  #basemap-select-wrap {
+  /* Coordinate search — sits directly under the place search */
+  #coord-search {
     position: fixed; top: 110px; left: 24px; z-index: 15;
+    width: 340px; display: flex; gap: 6px;
+  }
+  #coord-search-mode {
+    flex: 0 0 116px; min-width: 0;
+    background: rgba(10,12,15,0.92); border: 1px solid var(--border);
+    border-radius: 5px; backdrop-filter: blur(10px);
+    color: var(--text); font-size: 11px; padding: 8px 6px; cursor: pointer;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    appearance: none; -webkit-appearance: none;
+  }
+  #coord-search-mode:focus { outline: none; border-color: var(--accent2); }
+  #coord-search-mode option { background: #0f1114; color: var(--text); }
+  #coord-search-wrap {
+    flex: 1; display: flex; align-items: center; min-width: 0;
+    background: rgba(10,12,15,0.92); border: 1px solid var(--border);
+    border-radius: 5px; backdrop-filter: blur(10px);
+    padding: 0 4px 0 10px; transition: border-color 0.2s;
+  }
+  #coord-search-wrap:focus-within { border-color: var(--accent2); }
+  #coord-search-wrap.invalid { border-color: #e84070; }
+  #coord-search-input {
+    flex: 1; min-width: 0; background: transparent; border: none; outline: none;
+    font-family: 'Consolas', 'SF Mono', monospace; font-size: 12px;
+    color: var(--text); padding: 8px 0;
+  }
+  #coord-search-input::placeholder { color: var(--muted); }
+  #coord-search-go {
+    background: transparent; border: none; color: var(--muted);
+    cursor: pointer; font-size: 14px; padding: 2px 6px;
+  }
+  #coord-search-go:hover { color: var(--accent); }
+
+  #dataset-select-wrap {
+    position: fixed; top: 156px; left: 24px; z-index: 15;
+    width: 340px;
+  }
+  #dataset-select {
+    width: 100%;
+    background: rgba(10,12,15,0.92); border: 1px solid var(--border);
+    border-radius: 5px; backdrop-filter: blur(10px);
+    color: var(--text); font-size: 12px;
+    padding: 8px 12px; cursor: pointer;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    appearance: none; -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%23a0aec0' stroke-width='2' viewBox='0 0 24 24'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+  }
+  #dataset-select:focus { outline: none; border-color: var(--accent2); }
+
+  /* ── Retrolens: thumbnails in cards + full-size lightbox ─────────── */
+  /* ── Historic photo overlay + fitting controls ─────────────────── */
+  .photo-overlay-img {
+    position: absolute; top: 0; left: 0;
+    transform-origin: 0 0; pointer-events: none;
+    z-index: 2; will-change: transform;
+  }
+  .fit-handle {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--accent2); border: 2px solid #fff;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.6); cursor: grab;
+  }
+  .fit-handle:active { cursor: grabbing; }
+  .fit-handle-move {
+    width: 18px; height: 18px; border-radius: 4px;
+    background: var(--accent);
+  }
+  /* Sits directly under the basemap selector, matching its styling */
+  #fit-panel {
+    position: fixed; top: 240px; left: 24px; z-index: 16;
+    width: 340px; display: none; flex-direction: column; gap: 9px;
+    background: rgba(10,12,15,0.92); border: 1px solid var(--border);
+    border-radius: 5px; backdrop-filter: blur(10px);
+    padding: 11px 12px; color: var(--text); font-size: 12px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  #fit-panel.open { display: flex; }
+  #fit-panel .fit-row { display: flex; align-items: center; gap: 7px; }
+  #fit-panel .fit-row.wrap { flex-wrap: wrap; }
+  #fit-title {
+    font-weight: 600; font-size: 11.5px; color: var(--accent2);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  #fit-panel input[type=range] { flex: 1; accent-color: var(--accent); }
+  #fit-panel .fit-btn {
+    background: none; border: 1px solid var(--border); color: var(--text);
+    border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 11px;
+    font-family: inherit;
+  }
+  #fit-panel .fit-btn:hover { border-color: var(--accent); color: var(--accent); }
+  #fit-panel .fit-btn.primary { border-color: var(--accent); color: var(--accent); }
+  #fit-hint { opacity: 0.55; font-size: 10.5px; line-height: 1.4; }
+  #fit-opacity-val { min-width: 32px; text-align: right; opacity: 0.8; }
+
+  .panel-thumb {
+    display: block; width: 100%; max-height: 190px;
+    object-fit: cover; border-radius: 5px; cursor: zoom-in;
+    border: 1px solid var(--border); background: #12151a;
+    margin-bottom: 10px;
+  }
+  .photo-meta { font-size: 11px; opacity: 0.7; margin-top: 2px; }
+  .sup-badge { color: var(--accent2); opacity: 0.95; }
+
+  #photo-lightbox {
+    position: fixed; inset: 0; z-index: 300;
+    background: rgba(0,0,0,0.88); backdrop-filter: blur(4px);
+    display: none; align-items: center; justify-content: center;
+    flex-direction: column; padding: 24px;
+  }
+  #photo-lightbox.open { display: flex; }
+  #photo-lightbox img {
+    max-width: 92vw; max-height: 78vh; object-fit: contain;
+    border-radius: 6px; box-shadow: 0 12px 48px rgba(0,0,0,0.6);
+  }
+  #photo-lightbox .pl-bar {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    margin-top: 14px; color: var(--text); font-size: 12px;
+    max-width: 92vw;
+  }
+  #photo-lightbox .pl-title { font-weight: 600; font-size: 13px; }
+  #photo-lightbox .pl-close {
+    position: absolute; top: 16px; right: 20px;
+    background: none; border: none; color: var(--text);
+    font-size: 26px; cursor: pointer; opacity: 0.75;
+  }
+  #photo-lightbox .pl-close:hover { opacity: 1; }
+  #photo-lightbox .pl-spinner { color: var(--text); opacity: 0.7; }
+  #dataset-select option { background: #0f1114; color: var(--text); }
+
+  #basemap-select-wrap {
+    position: fixed; top: 198px; left: 24px; z-index: 15;
     width: 340px;
   }
   #basemap-select {
@@ -644,6 +795,59 @@ window._zstdReady = new Promise((resolve, reject) => {
   <div id="geocoder-results"></div>
 </div>
 
+<div id="coord-search">
+  <select id="coord-search-mode" title="Coordinate system"></select>
+  <div id="coord-search-wrap">
+    <input id="coord-search-input" type="text" autocomplete="off"
+           spellcheck="false" placeholder="Search by coordinates…">
+    <button id="coord-search-go" title="Go to coordinates">&#10132;</button>
+  </div>
+</div>
+
+<div id="fit-panel">
+  <div class="fit-row"><span id="fit-title"></span></div>
+  <div class="fit-row">
+    <span>Opacity</span>
+    <input type="range" id="fit-opacity" min="10" max="100" value="65">
+    <span id="fit-opacity-val">65%</span>
+  </div>
+  <div class="fit-row wrap">
+    <button class="fit-btn" onclick="transformQuad(-1,1)" title="Rotate anticlockwise">&#8634;</button>
+    <button class="fit-btn" onclick="transformQuad(1,1)" title="Rotate clockwise">&#8635;</button>
+    <button class="fit-btn" onclick="transformQuad(0,1.02)" title="Enlarge">+</button>
+    <button class="fit-btn" onclick="transformQuad(0,0.98)" title="Shrink">&minus;</button>
+    <button class="fit-btn" onclick="resetFit()">Reset</button>
+  </div>
+  <div class="fit-row wrap">
+    <button class="fit-btn primary" onclick="saveCurrentFit(this)">Save fit</button>
+    <button class="fit-btn" onclick="exportWorldFile(this)" title="Download .jgw + .prj — use alongside the full-resolution JPG">World file</button>
+    <button class="fit-btn" onclick="exportPointsFile(this)" title="QGIS Georeferencer points file (exact for warped fits)">QGIS points</button>
+    <button class="fit-btn" onclick="copyGdalCommand(this)" title="Copy a GDAL command to build a GeoTIFF">GDAL</button>
+    <button class="fit-btn" onclick="removePhotoOverlay()">Close</button>
+  </div>
+  <div id="fit-hint">Drag corner dots to stretch &middot; square handle to move</div>
+</div>
+
+<div id="photo-lightbox" onclick="if(event.target===this)closePhoto()">
+  <button class="pl-close" onclick="closePhoto()" title="Close (Esc)">&times;</button>
+  <img id="pl-img" alt="Historic aerial photograph" />
+  <div class="pl-bar">
+    <span class="pl-title" id="pl-title"></span>
+    <span id="pl-meta"></span>
+    <a id="pl-full" class="btn btn-secondary" target="_blank" rel="noopener">Full resolution</a>
+    <a id="pl-record" class="btn btn-secondary" href="https://retrolens.co.nz/" target="_blank" rel="noopener">Retrolens</a>
+  </div>
+</div>
+
+<div id="dataset-select-wrap">
+  <select id="dataset-select" title="Dataset">
+    <option value="topo">Dataset: Topographic Maps (NZMS)</option>
+    <option value="imagery" selected>Dataset: Aerial Imagery</option>
+    <option value="elevation">Dataset: Elevation (DEM/DSM)</option>
+    <option value="coastal">Dataset: Coastal</option>
+  </select>
+</div>
+
 <div id="basemap-select-wrap">
   <select id="basemap-select">
     <option value="topo">NZ Topo Gridless</option>
@@ -810,10 +1014,253 @@ proj4.defs('EPSG:2193',
 const toNZTM  = (lng, lat) => proj4('EPSG:4326', 'EPSG:2193', [lng, lat]);
 const toWGS84 = (e, n)     => proj4('EPSG:2193', 'EPSG:4326', [e, n]);
 
+// ── Historic NZ coordinate systems (cursor readout only) ─────────────────────
+// NZGD49-based grids, used on older topographic mapping. The 7-parameter
+// transformation below (NZGD49 -> WGS84, EPSG code 1701) is accurate to
+// roughly a metre, which is ample for reading positions off a screen but
+// not a substitute for LINZ's nzgd2kgrid distortion grid in survey work.
+//
+// The Yard Grids are in BRITISH YARDS (Sears 1922) = 0.914398414616029 m —
+// they carried the 1:63,360 inch-to-the-mile series from 1942 to 1973.
+const _NZGD49 = '+towgs84=59.47,-5.04,187.44,-0.47,0.1,-1.024,-4.5993';
+proj4.defs('EPSG:27200',                       // NZ Map Grid (1972–2001)
+  `+proj=nzmg +lat_0=-41 +lon_0=173 +x_0=2510000 +y_0=6023150 ` +
+  `+ellps=intl ${_NZGD49} +units=m +no_defs`);
+proj4.defs('EPSG:27291',                       // North Island Yard Grid
+  `+proj=tmerc +lat_0=-39 +lon_0=175.5 +k=1 ` +
+  `+x_0=274319.524384809 +y_0=365759.365846412 ` +
+  `+ellps=intl ${_NZGD49} +to_meter=0.914398414616029 +no_defs`);
+proj4.defs('EPSG:27292',                       // South Island Yard Grid
+  `+proj=tmerc +lat_0=-44 +lon_0=171.5 +k=1 ` +
+  `+x_0=457199.207308015 +y_0=457199.207308015 ` +
+  `+ellps=intl ${_NZGD49} +to_meter=0.914398414616029 +no_defs`);
+
+// Cursor readout modes — double-click the readout to cycle.
+// ── Coordinate formatting / parsing helpers ─────────────────────────────────
+
+// Decimal degrees -> 41°17'11.4"S
+function toDMS(v, posChar, negChar) {
+  const hemi = v < 0 ? negChar : posChar;
+  let a = Math.abs(v);
+  const d = Math.floor(a);
+  const mFloat = (a - d) * 60;
+  let m = Math.floor(mFloat);
+  let s = (mFloat - m) * 60;
+  if (s >= 59.995) { s = 0; m += 1; }        // carry on rounding
+  return `${d}\u00B0${String(m).padStart(2, '0')}'` +
+         `${s.toFixed(2).padStart(5, '0')}"${hemi}`;
+}
+
+// Parse one DMS or decimal component, with optional hemisphere letter.
+// Accepts: 41°17'11.4"S | 41 17 11.4 S | -41.2865 | 41.2865S
+function parseAngle(str) {
+  if (!str) return NaN;
+  const t = str.trim().toUpperCase();
+  const hemiMatch = t.match(/[NSEW]/);
+  const hemi = hemiMatch ? hemiMatch[0] : null;
+  const nums = (t.replace(/[NSEW]/g, '').match(/-?\d+(?:\.\d+)?/g) || [])
+                 .map(Number);
+  if (!nums.length) return NaN;
+  const sign = nums[0] < 0 ? -1 : 1;
+  let val = Math.abs(nums[0]) + (nums[1] || 0) / 60 + (nums[2] || 0) / 3600;
+  val *= sign;
+  if (hemi === 'S' || hemi === 'W') val = -Math.abs(val);
+  return val;
+}
+
+// Split a "lat lon" style string into its two halves, tolerating commas,
+// hemisphere letters and DMS punctuation.
+function splitPair(text) {
+  const t = (text || '').trim();
+  if (t.includes(',')) {
+    const [a, b] = t.split(',');
+    return [a, b];
+  }
+  // Split after a hemisphere letter if present…
+  const hemiSplit = t.match(/^(.*?[NS])\s+(.*)$/i);
+  if (hemiSplit) return [hemiSplit[1], hemiSplit[2]];
+  // …otherwise on the midpoint of the numeric groups.
+  const groups = t.match(/-?\d+(?:\.\d+)?/g) || [];
+  if (groups.length === 2) return t.split(/\s+/);
+  if (groups.length >= 6) {           // DMS pair: 3 numbers each
+    const idx = t.indexOf(groups[3], t.indexOf(groups[2]) + groups[2].length);
+    return [t.slice(0, idx), t.slice(idx)];
+  }
+  const parts = t.split(/\s+/);
+  const half = Math.ceil(parts.length / 2);
+  return [parts.slice(0, half).join(' '), parts.slice(half).join(' ')];
+}
+
+// Two eastings/northings from free text ("E 1748736 N 5427916", "1748736,5427916")
+function parseEN(text) {
+  const nums = ((text || '').match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+  return nums.length >= 2 ? [nums[0], nums[1]] : null;
+}
+
+// Cursor readout / search modes. Each provides fmt(lng,lat) -> string and
+// parse(text) -> [lng, lat] | null.
+const COORD_MODES = [
+  { id: 'nztm',  label: 'NZTM', epsg: 'EPSG:2193', unit: '',
+    hint: 'E 1748736  N 5427916' },
+  { id: 'wgs84', label: 'WGS84 DD' },
+  { id: 'dms',   label: 'WGS84 DMS' },
+  { id: 'nzmg',  label: 'NZMG', epsg: 'EPSG:27200', unit: '',
+    hint: 'E 2658788  N 5989626' },
+  { id: 'niyg',  label: 'North Island Yard Grid', epsg: 'EPSG:27291',
+    unit: ' yd', hint: 'E 233706  N 121849' },
+  { id: 'siyg',  label: 'South Island Yard Grid', epsg: 'EPSG:27292',
+    unit: ' yd', hint: 'E 600460  N 555965' },
+];
+
+// Attach formatters/parsers (projected grids share one implementation).
+for (const m of COORD_MODES) {
+  if (m.epsg) {
+    m.fmt = (lng, lat) => {
+      const [E, N] = proj4('EPSG:4326', m.epsg, [lng, lat]);
+      return `E ${Math.round(E)}  N ${Math.round(N)}${m.unit}`;
+    };
+    m.parse = text => {
+      const en = parseEN(text);
+      if (!en) return null;
+      const ll = proj4(m.epsg, 'EPSG:4326', en);
+      return (isFinite(ll[0]) && isFinite(ll[1])) ? ll : null;
+    };
+  }
+}
+
+COORD_MODES.find(m => m.id === 'wgs84').fmt = (lng, lat) =>
+  `${Math.abs(lat).toFixed(5)}\u00B0${lat < 0 ? 'S' : 'N'}  ` +
+  `${Math.abs(lng).toFixed(5)}\u00B0${lng < 0 ? 'W' : 'E'}`;
+COORD_MODES.find(m => m.id === 'wgs84').hint = '-41.2865, 174.7762';
+COORD_MODES.find(m => m.id === 'wgs84').parse = text => {
+  const [a, b] = splitPair(text);
+  const lat = parseAngle(a), lng = parseAngle(b);
+  return (isFinite(lat) && isFinite(lng)) ? [lng, lat] : null;
+};
+
+COORD_MODES.find(m => m.id === 'dms').fmt = (lng, lat) =>
+  `${toDMS(lat, 'N', 'S')}  ${toDMS(lng, 'E', 'W')}`;
+COORD_MODES.find(m => m.id === 'dms').hint = `41\u00B017'11.4"S 174\u00B046'34.3"E`;
+COORD_MODES.find(m => m.id === 'dms').parse =
+  COORD_MODES.find(m => m.id === 'wgs84').parse;
+
+let _coordMode = 0;
+try {
+  const saved = localStorage.getItem('coord_mode');
+  const i = COORD_MODES.findIndex(m => m.id === saved);
+  if (i >= 0) _coordMode = i;
+} catch {}
+
+let _lastCursor = null;   // [lng, lat] of the last mousemove
+
+function renderCoords() {
+  const bar = document.getElementById('coords-bar');
+  if (!bar) return;
+  const m = COORD_MODES[_coordMode];
+  if (!_lastCursor) { bar.textContent = `${m.label}  \u2014 , \u2014`; return; }
+  try {
+    bar.textContent = `${m.label}  ${m.fmt(_lastCursor[0], _lastCursor[1])}`;
+  } catch (e) {
+    bar.textContent = `${m.label}  \u2014 , \u2014`;
+  }
+}
+
+function cycleCoordMode() {
+  _coordMode = (_coordMode + 1) % COORD_MODES.length;
+  try { localStorage.setItem('coord_mode', COORD_MODES[_coordMode].id); } catch {}
+  renderCoords();
+}
+
 // Master FGB — single file containing all 621,728 imagery sheets across NZ.
 // Spatially indexed with Hilbert R-tree so only features intersecting the
 // click bounding box are fetched via HTTP range requests.
-const MASTER_FGB = 'https://imagery.mutant.kiwi/all_imagery.fgb';
+// ── Datasets — identical FGB schema, only the URL differs ────────────────────
+const DATASETS = {
+  topo:      'https://imagery.mutant.kiwi/all_topo.fgb',
+  retrolens: 'https://imagery.mutant.kiwi/all_retrolens.fgb',
+  imagery:   'https://imagery.mutant.kiwi/all_imagery.fgb',
+  elevation: 'https://imagery.mutant.kiwi/all_elevation.fgb',
+  coastal:   'https://imagery.mutant.kiwi/all_coastal.fgb',
+};
+// Series code -> how the heading reads. Scales are recorded so a result
+// can be read without opening the sheet.
+const TOPO_SERIES = {
+  NZMS001: 'N.Z.M.S. 1  1:63,360 Topographic',
+  NZMS002: 'N.Z.M.S. 2  1:25,000 Topographic',
+  NZMS003: 'N.Z.M.S. 3  1:15,840 Mosaic',
+  NZMS004: 'N.Z.M.S. 4  1:25,000 Mosaic',
+};
+
+let currentDataset = 'imagery';
+function fgbUrl() { return DATASETS[currentDataset] || DATASETS.imagery; }
+// Retrolens holds scanned historic photos: plain JPGs, NOT georeferenced.
+// They are viewed, never draped on the map — the COG pipeline is bypassed.
+function isPhotoDataset() { return currentDataset === 'retrolens'; }
+
+// A result is a scanned photo (plain JPG, not georeferenced) rather than a
+// COG tile. Detected per feature because the imagery view merges both.
+// Scanned topographic map sheets (NZMS series). Georeferenced COGs, so
+// they load on the map exactly like LINZ imagery — only the metadata and
+// the group headings differ.
+// What counts as "the same series" when looking for adjoining sheets.
+// Imagery uses the collection slug; map sheets share a series code but
+// each has its own title_unicode, so matching on that finds nothing.
+function _seriesKeyOf(props) {
+  const p = props || {};
+  if (p.series) return 'topo:' + p.series;                 // NZMS 1..4
+  if (p.survey) return 'retro:' + p.survey;                // Retrolens run
+  return 'coll:' + (p.title_unicode || '');                // LINZ collection
+}
+
+function isTopoFeature(props) {
+  return !!(props && props.series);
+}
+
+function isPhotoFeature(props) {
+  return !!(props && (props.asset_url_thumb ||
+            /\.jpe?g($|\?)/i.test(props.asset_url_image || '')));
+}
+
+// ── Retrolens photos superseded by georeferenced COGs ────────────────────
+// survey_match.py publishes a small sidecar listing every survey number
+// that also exists in the LINZ COG imagery. Photos from those surveys are
+// hidden by default (the orthophoto is the better product) with a toggle
+// to show them. Regenerated after each LINZ harvest — no Retrolens
+// re-harvest needed, so the two update cycles stay independent.
+const COG_SURVEYS_URL = 'https://imagery.mutant.kiwi/retrolens_cog_surveys.json';
+let cogSurveys = null;          // Set of normalised survey ids, or null
+let showSuperseded = false;
+
+// Must match norm_survey() in survey_match.py:
+//   'SN255'/'255'/'0255' -> '255' ; 'SNC50347'/'c50347' -> 'C50347'
+function normSurvey(raw) {
+  if (!raw) return '';
+  let s = String(raw).trim().toUpperCase();
+  if (s.startsWith('SN')) s = s.slice(2);
+  s = s.replace(/^[_-]+/, '');
+  const m = s.match(/^([A-Z]*)0*(\d+)$/);
+  return m ? m[1] + m[2] : s;
+}
+
+async function loadCogSurveys() {
+  if (cogSurveys !== null) return cogSurveys;
+  try {
+    const r = await fetch(COG_SURVEYS_URL, { cache: 'no-cache' });
+    if (!r.ok) throw new Error(r.status);
+    const j = await r.json();
+    cogSurveys = new Set((j.surveys || []).map(normSurvey));
+  } catch (e) {
+    console.warn('COG survey sidecar unavailable:', e);
+    cogSurveys = new Set();     // fail open — show every photo
+  }
+  return cogSurveys;
+}
+
+function isSuperseded(props) {
+  return !!(cogSurveys && cogSurveys.size &&
+            cogSurveys.has(normSurvey(props.survey)));
+}
+const MASTER_FGB = DATASETS.imagery; // legacy references
 const LINZ_KEY = 'd01KKYTMZXMFTE56FS0SE8BYXNT';
 
 const CONFIG = {
@@ -967,12 +1414,75 @@ document.getElementById('basemap-select').addEventListener('change', e => {
   setBasemap(e.target.value);
 });
 
-// Live coordinate display — shows NZTM (EPSG:2193) as mouse moves.
+// Live coordinate display — double-click the readout to cycle through
+// NZTM, WGS84, NZMG and the North/South Island Yard Grids.
 map.on('mousemove', e => {
-  const [E, N] = toNZTM(e.lngLat.lng, e.lngLat.lat);
-  document.getElementById('coords-bar').textContent =
-    `NZTM  E ${Math.round(E)}  N ${Math.round(N)}`;
+  _lastCursor = [e.lngLat.lng, e.lngLat.lat];
+  renderCoords();
 });
+
+// ── Search by coordinates ───────────────────────────────────────────────────
+(() => {
+  const sel   = document.getElementById('coord-search-mode');
+  const input = document.getElementById('coord-search-input');
+  const wrap  = document.getElementById('coord-search-wrap');
+  const go    = document.getElementById('coord-search-go');
+  if (!sel || !input) return;
+
+  COORD_MODES.forEach((m, i) => {
+    const o = document.createElement('option');
+    o.value = i; o.textContent = m.label;
+    sel.appendChild(o);
+  });
+
+  function applyHint() {
+    const m = COORD_MODES[sel.value];
+    input.placeholder = m.hint || 'Search by coordinates…';
+  }
+  sel.value = 0;
+  applyHint();
+  sel.addEventListener('change', () => { applyHint(); wrap.classList.remove('invalid'); });
+
+  function runSearch() {
+    const m = COORD_MODES[sel.value];
+    const txt = input.value.trim();
+    if (!txt || !m.parse) return;
+    let ll = null;
+    try { ll = m.parse(txt); } catch (e) { ll = null; }
+    // Sanity-check the result lands somewhere on Earth near NZ.
+    const sane = ll && isFinite(ll[0]) && isFinite(ll[1]) &&
+                 Math.abs(ll[1]) <= 90 && Math.abs(ll[0]) <= 180;
+    if (!sane) {
+      wrap.classList.add('invalid');
+      setTimeout(() => wrap.classList.remove('invalid'), 1600);
+      return;
+    }
+    wrap.classList.remove('invalid');
+    map.flyTo({ center: ll, zoom: Math.max(map.getZoom(), 14), duration: 900 });
+    placeMarker({ lng: ll[0], lat: ll[1] });
+    _lastCursor = ll;
+    renderCoords();
+  }
+
+  go.addEventListener('click', runSearch);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); runSearch(); }
+  });
+})();
+
+(() => {
+  const bar = document.getElementById('coords-bar');
+  if (!bar) return;
+  bar.title = 'Double-click to change coordinate system';
+  bar.style.cursor = 'pointer';
+  bar.style.userSelect = 'none';
+  bar.addEventListener('dblclick', ev => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    cycleCoordMode();
+  });
+  renderCoords();       // show the saved mode label before first move
+})();
 
 // Places an animated pulse marker at the last-clicked map position.
 // Removes any previous marker before adding the new one.
@@ -1067,25 +1577,35 @@ async function queryFlatGeobuf(lngWGS, latWGS, token) {
   const d = 1000; // 1 km bbox buffer — tight is fine with a spatial index
   const rect = { minX: e - d, minY: n - d, maxX: e + d, maxY: n + d };
 
-  try {
-    const results = [];
-    let featureCount = 0;
-    for await (const feature of flatgeobuf.deserialize(MASTER_FGB, rect)) {
-      featureCount++;
-      if (token.cancelled) break;
-      // Precise point-in-polygon test in NZTM2000 space
-      if (pointInFeature(e, n, feature)) {
-        // Reproject geometry to WGS84 for MapLibre footprint overlay
-        feature.geometry = reprojectGeom(feature.geometry);
-        results.push(feature);
+  // The Aerial Imagery view merges two sources: georeferenced COG tiles
+  // and scanned Retrolens photographs of the same country. Both share the
+  // schema, so they are queried in parallel and merged into one list.
+  const urls = currentDataset === 'imagery'
+    ? [DATASETS.imagery, DATASETS.retrolens]
+    : [fgbUrl()];
+
+  async function scanOne(url) {
+    const out = [];
+    let seen = 0;
+    try {
+      for await (const feature of flatgeobuf.deserialize(url, rect)) {
+        seen++;
+        if (token.cancelled) break;
+        if (pointInFeature(e, n, feature)) {
+          feature.geometry = reprojectGeom(feature.geometry);
+          out.push(feature);
+        }
       }
+    } catch (err) {
+      // A missing/failed source must not empty the whole result list.
+      debugLog(`ERR query ${url.split('/').pop()}: ${err.message.slice(0, 60)}`);
     }
-    debugLog(`${featureCount} bbox hits, ${results.length} matched — click query`);
-    return results;
-  } catch (err) {
-    debugLog(`ERR queryFlatGeobuf: ${err.message.slice(0, 80)}`);
-    return [];
+    debugLog(`${url.split('/').pop()}: ${seen} bbox hits, ${out.length} matched`);
+    return out;
   }
+
+  const lists = await Promise.all(urls.map(scanOne));
+  return lists.flat();
 }
 
 // Reproject a GeoJSON geometry from NZTM2000 (EPSG:2193) to WGS84.
@@ -1171,7 +1691,16 @@ function _renderResults(features) {
   for (const f of features) {
     const r     = (f.properties.region || 'new-zealand').toLowerCase();
     const title = (f.properties.title || '').toLowerCase();
-    const key   = (r === 'new-zealand' && title.includes('satellite')) ? '__satellite__' : r;
+    // Group by region AND source: a region can hold both georeferenced
+    // LINZ imagery and scanned Retrolens photos, and each heading should
+    // name exactly one archive.
+    const p     = f.properties || {};
+    // Topographic sheets group by SERIES first: a click can return maps
+    // from four different series of the same ground.
+    const src   = isTopoFeature(p) ? 'topo:' + (p.series || '')
+                : isPhotoFeature(p) ? 'retro' : 'linz';
+    const key   = (r === 'new-zealand' && title.includes('satellite'))
+                    ? '__satellite__' : src + '::' + r;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(f);
   }
@@ -1180,12 +1709,34 @@ function _renderResults(features) {
   const sorted = [...groups.entries()].sort(([a], [b]) => {
     if (a === '__satellite__') return 1;
     if (b === '__satellite__') return -1;
-    return a.localeCompare(b);
+    const [sa, ra] = a.split('::');
+    const [sb, rb] = b.split('::');
+    // LINZ imagery, then Retrolens photos, then map series in order.
+    const rank = s => s === 'linz' ? 0 : s === 'retro' ? 1 : 2;
+    if (rank(sa) !== rank(sb)) return rank(sa) - rank(sb);
+    if (sa !== sb) return sa.localeCompare(sb);
+    return (ra || '').localeCompare(rb || '');
   });
 
+  // Returns { tag, tagClass, nameClass, text } for a group heading.
   function groupLabel(key) {
-    if (key === '__satellite__') return 'NEW ZEALAND SATELLITE IMAGERY';
-    return key.replace(/-/g, ' ').toUpperCase() + ' AERIAL IMAGERY';
+    if (key === '__satellite__') {
+      return { tag: 'LINZ', tagClass: 'src-linz', nameClass: 'linz',
+               text: 'NEW ZEALAND SATELLITE IMAGERY' };
+    }
+    const [src, region] = key.split('::');
+    const name = (region || '').replace(/-/g, ' ').toUpperCase();
+    if (src.startsWith('topo:')) {
+      const series = src.slice(5);
+      const label = TOPO_SERIES[series] || series;
+      return { tag: 'NZMS', tagClass: 'src-topo', nameClass: 'topo',
+               text: `${label} — ${name}` };
+    }
+    return src === 'retro'
+      ? { tag: 'RETROLENS', tagClass: 'src-retro', nameClass: 'retro',
+          text: name + ' HISTORIC PHOTOS' }
+      : { tag: 'LINZ', tagClass: 'src-linz', nameClass: 'linz',
+          text: name + ' AERIAL IMAGERY' };
   }
 
   let cardIndex = 1;
@@ -1194,8 +1745,10 @@ function _renderResults(features) {
     group.className = 'region-group';
     const header = document.createElement('div');
     header.className = 'region-group-header';
+    const gl = groupLabel(key);
     header.innerHTML = `
-      <span class="region-group-name">${escHtml(groupLabel(key))}</span>
+      <span class="src-tag ${gl.tagClass}">${gl.tag}</span>
+      <span class="region-group-name ${gl.nameClass}">${escHtml(gl.text)}</span>
       <span class="region-group-count">${regionFeatures.length}</span>
       <svg class="region-group-chevron" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>`;
     header.addEventListener('click', () => group.classList.toggle('collapsed'));
@@ -1253,14 +1806,23 @@ map.on('click', async e => {
 
   // Sort by year descending (newest first) — most relevant imagery on top.
   // Features without a year sort to the bottom.
-  features.sort((a, b) => {
-    const ya = (a.properties.year || '').split('-')[0] || '0';
-    const yb = (b.properties.year || '').split('-')[0] || '0';
-    return parseInt(yb) - parseInt(ya);
-  });
+  // Merged COG + photo list: sort newest first on the most precise date
+  // each source offers (photo_date 'YYYY-MM-DD', else the year, whose
+  // range form '2014-2015' sorts on its start year).
+  const _sortKey = f => {
+    const p = f.properties || {};
+    if (p.photo_date) return p.photo_date;
+    const y = (p.year || '').split('-')[0];
+    return y ? y + '-00-00' : '0000-00-00';
+  };
+  features.sort((a, b) => _sortKey(b).localeCompare(_sortKey(a)));
 
   window._lastResults = features;
-  countEl.textContent = features.length;
+  await loadCogSurveys();
+  const shownCount = showSuperseded ? features.length
+    : features.filter(f => !(isPhotoFeature(f.properties || {}) &&
+                             isSuperseded(f.properties || {}))).length;
+  countEl.textContent = shownCount;
   _renderResults(features);
 
   progressEl.style.width = '100%';
@@ -1311,6 +1873,20 @@ function appendCard(feature, index, container) {
   const existingMsg = resultsEl.querySelector('.state-msg');
   if (existingMsg) existingMsg.remove();
 
+  // Historic photos get their own card: thumbnail, metadata line, and
+  // actions that VIEW the scan rather than drape it on the map.
+  if (isTopoFeature(props)) {
+    appendTopoCard(feature, index, target);
+    return;
+  }
+
+  if (isPhotoFeature(props)) {
+    const sup = isSuperseded(props);
+    if (sup && !showSuperseded) return;      // orthophoto exists — hide
+    appendPhotoCard(feature, index, target, sup);
+    return;
+  }
+
   const card = document.createElement('div');
   card.className = 'result-card';
   card.dataset.index = index;
@@ -1338,6 +1914,8 @@ function appendCard(feature, index, container) {
           data-cog-url="${escHtml(imageUrl)}"
           data-cog-label="${escHtml(label)}"
           data-cog-title-unicode="${escHtml(props.title_unicode || '')}"
+          data-cog-series-key="${escHtml(_seriesKeyOf(props))}"
+          data-cog-year="${escHtml(props.year || '')}"
           data-cog-asset-id="${escHtml(props.asset_id || '')}">
           <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
           Open on Map
@@ -1385,9 +1963,30 @@ function toRGBA(bands, w, h, nirMode) {
       out[i*4+2] = src[i*3+2]; out[i*4+3] = 255;
     }
   } else if (bands.length === 1) {
+    // Single band. 8-bit grayscale passes straight through; anything else
+    // (Float32/Int16 DEMs & DSMs from the elevation/coastal datasets) gets
+    // an auto min–max stretch with nodata (≤ -999 or non-finite) rendered
+    // transparent.
+    const src = bands[0];
+    let mn = Infinity, mx = -Infinity;
+    const step = Math.max(1, Math.floor(n / 20000));   // sample for speed
+    for (let i = 0; i < n; i += step) {
+      const v = src[i];
+      if (!Number.isFinite(v) || v <= -999) continue;
+      if (v < mn) mn = v;
+      if (v > mx) mx = v;
+    }
+    const isPlain8bit = mn >= 0 && mx <= 255 && Number.isInteger(mn) && Number.isInteger(mx) && mx > 1;
+    if (!Number.isFinite(mn) || mx <= mn) { mn = 0; mx = 1; }
+    const range = mx - mn;
     for (let i = 0; i < n; i++) {
-      const v = bands[0][i];
-      out[i*4] = v; out[i*4+1] = v; out[i*4+2] = v; out[i*4+3] = 255;
+      const v = src[i];
+      if (!Number.isFinite(v) || v <= -999) {
+        out[i*4+3] = 0;                                  // nodata → transparent
+        continue;
+      }
+      const g = isPlain8bit ? v : Math.round(((v - mn) / range) * 255);
+      out[i*4] = g; out[i*4+1] = g; out[i*4+2] = g; out[i*4+3] = 255;
     }
   } else if (nirMode && bands.length >= 4) {
     // CIR (Colour Infrared) false-colour composite:
@@ -1435,6 +2034,695 @@ map.on('load', () => {
 
 // Show a feature's polygon footprint on the map.
 // If pin=true, locks the footprint until clearFootprint() is called.
+// ═══════════════════════════════════════════════════════════════════
+// RETROLENS HISTORIC PHOTOS
+// Scanned aerial photographs served as plain JPGs in three renditions
+// (thumbnail / Med / High). They are NOT georeferenced, so selecting one
+// zooms the map to its footprint and opens the scan in a lightbox.
+// ═══════════════════════════════════════════════════════════════════
+
+// Bounding box of a GeoJSON geometry → [w, s, e, n]
+function geomBounds(geometry) {
+  let w = Infinity, s = Infinity, e = -Infinity, n = -Infinity;
+  const walk = coords => {
+    if (typeof coords[0] === 'number') {
+      const [x, y] = coords;
+      if (x < w) w = x; if (x > e) e = x;
+      if (y < s) s = y; if (y > n) n = y;
+    } else coords.forEach(walk);
+  };
+  walk(geometry.coordinates);
+  return [w, s, e, n];
+}
+
+function zoomToFootprint(feature) {
+  if (!feature || !feature.geometry) return;
+  const [w, s, e, n] = geomBounds(feature.geometry);
+  if (![w, s, e, n].every(Number.isFinite)) return;
+  map.fitBounds([[w, s], [e, n]], { padding: 90, maxZoom: 16, duration: 800 });
+}
+
+function openPhoto(props) {
+  const box = document.getElementById('photo-lightbox');
+  const img = document.getElementById('pl-img');
+  img.removeAttribute('src');
+  img.src = props.asset_url_med || props.asset_url_image || '';
+  document.getElementById('pl-title').textContent = props.title || '';
+  document.getElementById('pl-meta').textContent  = props.description || '';
+  const full = document.getElementById('pl-full');
+  full.href = props.asset_url_image || '#';
+  box.classList.add('open');
+}
+
+function closePhoto() {
+  const box = document.getElementById('photo-lightbox');
+  box.classList.remove('open');
+  document.getElementById('pl-img').removeAttribute('src');
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closePhoto();
+});
+
+function appendTopoCard(feature, index, target) {
+  const props = feature.properties || {};
+  const url   = props.asset_url_image || '';
+  const label = props.title || props.asset_id || 'Map sheet';
+
+  // What a map cataloguer wants visible without opening the sheet.
+  const SHOW = ['sheet', 'sheet_name', 'year', 'scale', 'series',
+                'sheets_covered', 'edition', 'variant', 'place', 'region'];
+  const metaKeys = SHOW.filter(k => props[k] != null && props[k] !== '');
+
+  const card = document.createElement('div');
+  card.className = 'result-card topo-card';
+  card.dataset.index = index;
+  card.dataset.layerUrl = url;
+  if (url === _pinnedLayerUrl) card.classList.add('expanded');
+
+  const scale = props.scale ? `1:${Number(props.scale).toLocaleString()}` : '';
+  const sub   = [props.year, scale].filter(Boolean).join('  ·  ');
+
+  card.innerHTML = `
+    <div class="card-header">
+      <div class="card-index" style="background:#b98cff">${index}</div>
+      <div class="card-info">
+        <div class="card-layer">${escHtml(label)}</div>
+        <div class="card-feat">${escHtml(sub)}</div>
+      </div>
+      <svg class="card-chevron" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+    </div>
+    <div class="card-body">
+      ${metaKeys.length ? `
+        <table class="meta-table">
+          ${metaKeys.map(k => `<tr><td>${escHtml(k.replace(/_/g, ' '))}</td><td>${escHtml(String(props[k]))}</td></tr>`).join('')}
+        </table>` : ''}
+      <div class="card-actions">
+        <button class="btn btn-primary" data-load-cog="1">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6l9-3 9 3v12l-9 3-9-3z"/><path d="M12 3v18"/></svg>
+          Open on Map
+        </button>
+        <button class="btn btn-secondary"
+          onclick="copyToClipboard('${escHtml(url)}', this)">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          Copy URL
+        </button>
+      </div>
+    </div>`;
+
+  card._feature = feature;
+  const loadBtn = card.querySelector('[data-load-cog]');
+  if (loadBtn) loadBtn.addEventListener('click', ev => {
+    ev.stopPropagation();
+    if (!url) { debugErr('No asset_url_image on this map sheet'); return; }
+    loadCogOnMap(url, label,
+                 props.asset_id || _assetIdFromUrl(url),
+                 props.title_unicode || '', _seriesKeyOf(props),
+                 props.year || '');
+  });
+  card.addEventListener('mouseenter', () => showFootprint(feature, false));
+  card.addEventListener('mouseleave', () => {
+    if (!card.classList.contains('footprint-active')) clearFootprintIfHover();
+  });
+  target.appendChild(card);
+}
+
+
+function appendPhotoCard(feature, index, target, superseded) {
+  const props = feature.properties || {};
+  const high  = props.asset_url_image || '';
+  const med   = props.asset_url_med || high;
+  const thumb = props.asset_url_thumb || '';
+  const label = props.title || props.asset_id || 'Historic photograph';
+
+  // Same collapsible structure as COG cards, different actions: these
+  // scans are not georeferenced, so they open rather than load on map.
+  const SHOW_KEYS = ['region', 'photo_date', 'survey', 'run',
+                     'photo_number', 'scale', 'photo_type', 'asset_id'];
+  const metaKeys = SHOW_KEYS.filter(k => props[k] != null && props[k] !== '');
+
+  const card = document.createElement('div');
+  card.className = 'result-card photo-card';
+  card.dataset.index = index;
+  card.dataset.layerUrl = props.asset_id || String(index);
+  if (card.dataset.layerUrl === _pinnedLayerUrl) card.classList.add('expanded');
+
+  card.innerHTML = `
+    <div class="card-header">
+      <div class="card-index" style="background:var(--accent2)">${index}</div>
+      <div class="card-info">
+        <div class="card-layer">${escHtml(label)}</div>
+        <div class="card-feat">${escHtml(props.asset_id || '')}</div>
+        ${superseded ? `<div class="photo-meta sup-badge"
+          title="This survey is also published as georeferenced imagery">
+          &#9635; georeferenced version available</div>` : ''}
+      </div>
+      <svg class="card-chevron" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+    </div>
+    <div class="card-body">
+      ${thumb ? `<img class="panel-thumb" loading="lazy"
+            src="${escHtml(thumb)}" alt="${escHtml(label)}"
+            title="Click to preview"
+            onerror="this.style.display='none'">` : ''}
+      ${metaKeys.length ? `
+        <table class="meta-table">
+          ${metaKeys.map(k => `<tr><td>${escHtml(k)}</td><td>${escHtml(String(props[k]))}</td></tr>`).join('')}
+        </table>` : ''}
+      <div class="card-actions">
+        ${high ? `
+        <button class="btn btn-secondary" data-place-photo="1"
+          style="border-color:var(--accent2);color:var(--accent2)">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+          Place on Map
+        </button>
+        <a class="btn btn-secondary" href="${escHtml(high)}"
+           target="_blank" rel="noopener">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><path d="M15 3h6v6M10 14L21 3"/></svg>
+          Open
+        </a>
+        <button class="btn btn-secondary"
+          onclick="copyToClipboard('${escHtml(high)}', this)">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          Copy URL
+        </button>` : ''}
+      </div>
+    </div>`;
+
+  card._feature = feature;
+
+  // Thumbnail in the open panel gives a larger preview without leaving.
+  const thumbEl = card.querySelector('.panel-thumb');
+  if (thumbEl) thumbEl.addEventListener('click', ev => {
+    ev.stopPropagation();
+    openPhoto(props);
+  });
+
+  const placeBtn = card.querySelector('[data-place-photo]');
+  if (placeBtn) placeBtn.addEventListener('click', ev => {
+    ev.stopPropagation();
+    zoomToFootprint(feature);
+    placePhotoOnMap(props, feature);
+  });
+  // A saved fit means this scan has been positioned before — say so.
+  if (getFit(props.asset_id) && placeBtn) {
+    placeBtn.title = 'A saved position exists for this photo';
+    placeBtn.textContent = ' Place on Map (saved)';
+  }
+
+  card.addEventListener('mouseenter', () => showFootprint(feature, false));
+  card.addEventListener('mouseleave', () => {
+    if (!card.classList.contains('footprint-active')) clearFootprintIfHover();
+  });
+
+  target.appendChild(card);
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// HISTORIC PHOTO OVERLAY  ("Place on map")
+// ═══════════════════════════════════════════════════════════════════
+// Retrolens scans are plain JPGs with no georeferencing, and the host
+// serves them without CORS headers — so they cannot be used as a
+// MapLibre `image` source (WebGL would need to read the pixels).
+//
+// Instead the image is a DOM element above the map canvas, warped with a
+// CSS matrix3d() projective transform computed from four geographic
+// corner points projected to screen space. The browser only DISPLAYS the
+// image, never samples it, so cross-origin is irrelevant.
+//
+// The four corners start from the Retrolens footprint polygon (already
+// derived from photo centre, altitude and focal length, so usually close)
+// and are then dragged into place. Fits persist per asset_id and can be
+// exported as GDAL ground control points.
+//
+// Caveat: a four-corner projective warp is an approximation. Lens
+// distortion, camera tilt and relief displacement mean it fits well on
+// flat ground and drifts in hill country. Not survey grade.
+
+const PHOTO_FIT_STORE = 'retrolens_fits_v1';
+
+let _overlay = null;   // { assetId, props, corners:[[lng,lat]x4], el, opacity }
+let _handles = [];     // maplibregl.Marker instances
+let _fitDirty = false;
+
+// ── Persistence ──────────────────────────────────────────────────────
+
+function loadFits() {
+  try { return JSON.parse(localStorage.getItem(PHOTO_FIT_STORE) || '{}'); }
+  catch { return {}; }
+}
+
+function saveFit(assetId, corners, opacity) {
+  if (!assetId) return;
+  const all = loadFits();
+  all[assetId] = { corners, opacity, saved: new Date().toISOString() };
+  try { localStorage.setItem(PHOTO_FIT_STORE, JSON.stringify(all)); }
+  catch (e) { console.warn('Could not save fit:', e); }
+}
+
+function getFit(assetId) { return loadFits()[assetId] || null; }
+
+function deleteFit(assetId) {
+  const all = loadFits();
+  delete all[assetId];
+  try { localStorage.setItem(PHOTO_FIT_STORE, JSON.stringify(all)); } catch {}
+}
+
+// ── Geometry helpers ─────────────────────────────────────────────────
+
+// First four distinct corners of a (Multi)Polygon ring, ordered
+// TL, TR, BR, BL as seen on screen (north-up assumption at capture).
+function footprintCorners(geometry) {
+  let ring = null;
+  if (geometry.type === 'Polygon') ring = geometry.coordinates[0];
+  else if (geometry.type === 'MultiPolygon') ring = geometry.coordinates[0][0];
+  if (!ring || ring.length < 4) return null;
+
+  let pts = ring.slice(0, ring.length - 1);          // drop closing point
+  if (pts.length > 4) pts = pts.slice(0, 4);
+  if (pts.length < 4) return null;
+
+  // Order by angle around the centroid so the quad never self-crosses.
+  const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
+  const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+  const withAng = pts.map(p => ({ p, a: Math.atan2(p[1] - cy, p[0] - cx) }));
+  // Start at top-left (angle closest to 135°) and go clockwise.
+  withAng.sort((u, v) => v.a - u.a);
+  const startIdx = withAng.reduce((best, o, i) => {
+    const d = Math.abs(o.a - (3 * Math.PI / 4));
+    return d < best.d ? { i, d } : best;
+  }, { i: 0, d: Infinity }).i;
+  return withAng.slice(startIdx).concat(withAng.slice(0, startIdx))
+                .map(o => o.p);
+}
+
+// Solve the 8 unknowns of a projective transform mapping the unit square
+// (0,0)(1,0)(1,1)(0,1) onto four destination screen points.
+// Returns [a,b,c,d,e,f,g,h] for  x' = (ax+by+c)/(gx+hy+1) etc.
+function projectiveFromUnitSquare(dst) {
+  const [p0, p1, p2, p3] = dst;                     // TL, TR, BR, BL
+  const dx1 = p1.x - p2.x, dx2 = p3.x - p2.x;
+  const dy1 = p1.y - p2.y, dy2 = p3.y - p2.y;
+  const sx = p0.x - p1.x + p2.x - p3.x;
+  const sy = p0.y - p1.y + p2.y - p3.y;
+
+  const den = dx1 * dy2 - dx2 * dy1;
+  if (!den) return null;
+
+  const g = (sx * dy2 - dx2 * sy) / den;
+  const h = (dx1 * sy - sx * dy1) / den;
+  const a = p1.x - p0.x + g * p1.x;
+  const b = p3.x - p0.x + h * p3.x;
+  const c = p0.x;
+  const d = p1.y - p0.y + g * p1.y;
+  const e = p3.y - p0.y + h * p3.y;
+  const f = p0.y;
+  return [a, b, c, d, e, f, g, h];
+}
+
+// CSS matrix3d string for the transform above (column-major 4x4).
+function matrix3dFrom(t) {
+  const [a, b, c, d, e, f, g, h] = t;
+  return `matrix3d(${a},${d},0,${g},${b},${e},0,${h},0,0,1,0,${c},${f},0,1)`;
+}
+
+// ── Overlay lifecycle ────────────────────────────────────────────────
+
+function placePhotoOnMap(props, feature) {
+  removePhotoOverlay();
+
+  const url = props.asset_url_med || props.asset_url_image;
+  if (!url) return;
+
+  const saved = getFit(props.asset_id);
+  const corners = saved ? saved.corners.map(c => c.slice())
+                        : footprintCorners(feature.geometry);
+  if (!corners) {
+    debugLog('No usable footprint corners for ' + props.asset_id);
+    return;
+  }
+
+  const el = document.createElement('img');
+  el.className = 'photo-overlay-img';
+  el.src = url;
+  el.alt = props.title || '';
+  el.draggable = false;
+  document.getElementById('map').appendChild(el);
+
+  _overlay = {
+    assetId: props.asset_id, props, feature,
+    corners, el,
+    opacity: saved ? saved.opacity : 0.65,
+    original: footprintCorners(feature.geometry),
+  };
+  el.style.opacity = _overlay.opacity;
+  _fitDirty = false;
+
+  el.addEventListener('load', () => {
+    // Natural size defines the pre-transform box the matrix maps from.
+    el.style.width  = el.naturalWidth + 'px';
+    el.style.height = el.naturalHeight + 'px';
+    redrawOverlay();
+  });
+
+  buildHandles();
+  showFitPanel();
+  redrawOverlay();
+}
+
+function removePhotoOverlay() {
+  if (_overlay && _overlay.el) _overlay.el.remove();
+  _handles.forEach(m => m.remove());
+  _handles = [];
+  _overlay = null;
+  hideFitPanel();
+}
+
+// Re-project corners to screen and re-apply the warp.
+function redrawOverlay() {
+  if (!_overlay || !_overlay.el) return;
+  const el = _overlay.el;
+  const w = el.naturalWidth, h = el.naturalHeight;
+  if (!w || !h) return;
+
+  const pts = _overlay.corners.map(c => map.project(c));
+  const t = projectiveFromUnitSquare(pts);
+  if (!t) return;
+
+  // The matrix maps the unit square; pre-scale the image to 1x1 first.
+  el.style.transformOrigin = '0 0';
+  el.style.transform =
+    matrix3dFrom(t) + ` scale(${1 / w}, ${1 / h})`;
+}
+
+// ── Corner / move handles ────────────────────────────────────────────
+
+function buildHandles() {
+  _handles.forEach(m => m.remove());
+  _handles = [];
+  if (!_overlay) return;
+
+  _overlay.corners.forEach((c, i) => {
+    const dot = document.createElement('div');
+    dot.className = 'fit-handle';
+    dot.title = 'Drag to stretch this corner';
+    const m = new maplibregl.Marker({ element: dot, draggable: true })
+      .setLngLat(c).addTo(map);
+    m.on('drag', () => {
+      const ll = m.getLngLat();
+      _overlay.corners[i] = [ll.lng, ll.lat];
+      _fitDirty = true;
+      redrawOverlay();
+    });
+    _handles.push(m);
+  });
+
+  // Centre handle translates the whole quad.
+  const centre = quadCentre(_overlay.corners);
+  const cdot = document.createElement('div');
+  cdot.className = 'fit-handle fit-handle-move';
+  cdot.title = 'Drag to move the photo';
+  const cm = new maplibregl.Marker({ element: cdot, draggable: true })
+    .setLngLat(centre).addTo(map);
+  let last = centre;
+  cm.on('dragstart', () => { last = [cm.getLngLat().lng, cm.getLngLat().lat]; });
+  cm.on('drag', () => {
+    const now = [cm.getLngLat().lng, cm.getLngLat().lat];
+    const dx = now[0] - last[0], dy = now[1] - last[1];
+    last = now;
+    _overlay.corners = _overlay.corners.map(c => [c[0] + dx, c[1] + dy]);
+    _handles.slice(0, 4).forEach((m, i) =>
+      m.setLngLat(_overlay.corners[i]));
+    _fitDirty = true;
+    redrawOverlay();
+  });
+  _handles.push(cm);
+}
+
+function quadCentre(corners) {
+  const x = corners.reduce((s, c) => s + c[0], 0) / corners.length;
+  const y = corners.reduce((s, c) => s + c[1], 0) / corners.length;
+  return [x, y];
+}
+
+function refreshHandlePositions() {
+  if (!_overlay || _handles.length < 5) return;
+  _overlay.corners.forEach((c, i) => _handles[i].setLngLat(c));
+  _handles[4].setLngLat(quadCentre(_overlay.corners));
+}
+
+// Rotate / scale the quad about its centre.
+function transformQuad(rotateDeg, scaleFactor) {
+  if (!_overlay) return;
+  const [cx, cy] = quadCentre(_overlay.corners);
+  const rad = (rotateDeg || 0) * Math.PI / 180;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  // Longitude degrees shrink with latitude — work in a local metric frame.
+  const kx = Math.cos(cy * Math.PI / 180) || 1;
+  _overlay.corners = _overlay.corners.map(([lng, lat]) => {
+    let dx = (lng - cx) * kx, dy = lat - cy;
+    let rx = dx * cos - dy * sin, ry = dx * sin + dy * cos;
+    rx *= (scaleFactor || 1); ry *= (scaleFactor || 1);
+    return [cx + rx / kx, cy + ry];
+  });
+  _fitDirty = true;
+  refreshHandlePositions();
+  redrawOverlay();
+}
+
+// ── Fit control panel ────────────────────────────────────────────────
+
+// Keep the cursor readout directly under whichever panel is lowest in
+// the left column — measured, not hard-coded, since the fit panel's
+// height depends on how its buttons wrap.
+function positionCoordsBar() {
+  const coords = document.getElementById('coords-bar');
+  const fit = document.getElementById('fit-panel');
+  if (!coords) return;
+  if (fit && fit.classList.contains('open')) {
+    const r = fit.getBoundingClientRect();
+    coords.style.top = Math.round(r.bottom + 10) + 'px';
+  } else {
+    coords.style.top = '';        // falls back to the CSS default (194px)
+  }
+}
+
+function showFitPanel() {
+  const p = document.getElementById('fit-panel');
+  if (!p || !_overlay) return;
+  document.getElementById('fit-title').textContent =
+    _overlay.props.title || _overlay.assetId;
+  const op = document.getElementById('fit-opacity');
+  op.value = Math.round(_overlay.opacity * 100);
+  document.getElementById('fit-opacity-val').textContent = op.value + '%';
+  p.classList.add('open');
+  requestAnimationFrame(positionCoordsBar);   // after layout settles
+}
+
+function hideFitPanel() {
+  const p = document.getElementById('fit-panel');
+  if (p) p.classList.remove('open');
+  positionCoordsBar();
+}
+
+// ── World file export ────────────────────────────────────────────────
+// A world file (.jgw) carries a 6-parameter AFFINE transform. Our fit has
+// 8 degrees of freedom (a full projective warp), so if corners have been
+// dragged into a genuine trapezoid the affine is a best fit and cannot be
+// exact — the residual is reported so the user can judge it. Pure
+// move/rotate/scale/skew fits are parallelograms and convert exactly.
+//
+// No pixel access is involved, so this works despite the image host
+// sending no CORS headers (writing a GeoTIFF in-browser would need pixel
+// access, and is therefore not possible from this origin).
+
+function solveAffine(px, world) {
+  let Sxx = 0, Sxy = 0, Sx = 0, Syy = 0, Sy = 0, S1 = 0;
+  for (const [c, r] of px) { Sxx+=c*c; Sxy+=c*r; Sx+=c; Syy+=r*r; Sy+=r; S1+=1; }
+  const M = [[Sxx,Sxy,Sx],[Sxy,Syy,Sy],[Sx,Sy,S1]];
+  const solve3 = (M, b) => {
+    const A = M.map((row, i) => row.concat([b[i]]));
+    for (let i = 0; i < 3; i++) {
+      let p = i;
+      for (let k = i+1; k < 3; k++) if (Math.abs(A[k][i]) > Math.abs(A[p][i])) p = k;
+      [A[i], A[p]] = [A[p], A[i]];
+      for (let k = i+1; k < 3; k++) {
+        const f = A[k][i]/A[i][i];
+        for (let j = i; j < 4; j++) A[k][j] -= f*A[i][j];
+      }
+    }
+    const x = [0,0,0];
+    for (let i = 2; i >= 0; i--) {
+      let s = A[i][3];
+      for (let j = i+1; j < 3; j++) s -= A[i][j]*x[j];
+      x[i] = s/A[i][i];
+    }
+    return x;
+  };
+  const bx = [0,0,0], by = [0,0,0];
+  px.forEach(([c, r], i) => {
+    bx[0] += c*world[i][0]; bx[1] += r*world[i][0]; bx[2] += world[i][0];
+    by[0] += c*world[i][1]; by[1] += r*world[i][1]; by[2] += world[i][1];
+  });
+  const [A, B, C] = solve3(M, bx), [D, E, F] = solve3(M, by);
+  let maxRes = 0;
+  px.forEach(([c, r], i) => {
+    maxRes = Math.max(maxRes,
+      Math.hypot(A*c + B*r + C - world[i][0], D*c + E*r + F - world[i][1]));
+  });
+  return { A, B, C, D, E, F, maxRes };
+}
+
+const NZTM_WKT = 'PROJCS["NZGD2000 / New Zealand Transverse Mercator 2000",' +
+  'GEOGCS["NZGD2000",DATUM["New_Zealand_Geodetic_Datum_2000",' +
+  'SPHEROID["GRS 1980",6378137,298.257222101]],PRIMEM["Greenwich",0],' +
+  'UNIT["degree",0.0174532925199433]],PROJECTION["Transverse_Mercator"],' +
+  'PARAMETER["latitude_of_origin",0],PARAMETER["central_meridian",173],' +
+  'PARAMETER["scale_factor",0.9996],PARAMETER["false_easting",1600000],' +
+  'PARAMETER["false_northing",10000000],UNIT["metre",1],AUTHORITY["EPSG","2193"]]';
+
+function downloadText(name, text) {
+  const blob = new Blob([text], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+}
+
+// Natural pixel size of a rendition (readable cross-origin — no CORS needed).
+function imageSize(url) {
+  return new Promise((resolve, reject) => {
+    const im = new Image();
+    im.onload = () => resolve([im.naturalWidth, im.naturalHeight]);
+    im.onerror = () => reject(new Error('could not read image size'));
+    im.src = url;
+  });
+}
+
+async function exportWorldFile(btn) {
+  if (!_overlay) return;
+  const name = _overlay.assetId || 'photo';
+  const high = _overlay.props.asset_url_image;
+  if (btn) btn.textContent = 'Reading…';
+  let w, h;
+  try {
+    [w, h] = await imageSize(high);     // world file must match High.jpg
+  } catch (e) {
+    if (btn) btn.textContent = 'Failed';
+    return;
+  }
+
+  // Corners are stored in WGS84; a world file wants a projected CRS.
+  const world = _overlay.corners.map(c => proj4('EPSG:4326', 'EPSG:2193', c));
+  const px = [[0, 0], [w, 0], [w, h], [0, h]];   // TL, TR, BR, BL
+  const f = solveAffine(px, world);
+
+  // World file references the CENTRE of the top-left pixel.
+  const cx = f.A*0.5 + f.B*0.5 + f.C;
+  const cy = f.D*0.5 + f.E*0.5 + f.F;
+  const jgw = [f.A, f.D, f.B, f.E, cx, cy]
+                .map(v => v.toFixed(10)).join('\n') + '\n';
+
+  downloadText(`${name}.jgw`, jgw);
+  downloadText(`${name}.prj`, NZTM_WKT);
+
+  if (btn) {
+    btn.textContent = f.maxRes > 1
+      ? `Saved (±${f.maxRes.toFixed(0)}m)` : 'Saved';
+    setTimeout(() => { btn.textContent = 'World file'; }, 2600);
+  }
+}
+
+// QGIS Georeferencer points file — supports polynomial/TPS warping, so it
+// reproduces a projective fit exactly where a world file cannot.
+async function exportPointsFile(btn) {
+  if (!_overlay) return;
+  const name = _overlay.assetId || 'photo';
+  let w, h;
+  try {
+    [w, h] = await imageSize(_overlay.props.asset_url_image);
+  } catch (e) { return; }
+
+  const world = _overlay.corners.map(c => proj4('EPSG:4326', 'EPSG:2193', c));
+  const px = [[0, 0], [w, 0], [w, h], [0, h]];
+  // QGIS stores source row as a negative value (image Y runs downwards).
+  const lines = ['#CRS: EPSG:2193', 'mapX,mapY,pixelX,pixelY,enable'];
+  world.forEach(([X, Y], i) => {
+    lines.push(`${X.toFixed(4)},${Y.toFixed(4)},${px[i][0]},${-px[i][1]},1`);
+  });
+  downloadText(`${name}.jpg.points`, lines.join('\n') + '\n');
+  if (btn) {
+    btn.textContent = 'Saved';
+    setTimeout(() => { btn.textContent = 'QGIS points'; }, 2000);
+  }
+}
+
+// ── GDAL export ──────────────────────────────────────────────────────
+// Emits a gdal_translate command with four GCPs (pixel/line → lng/lat),
+// ready to turn the scan into a georeferenced GeoTIFF.
+function fitToGdalCommand() {
+  if (!_overlay) return '';
+  const el = _overlay.el;
+  const w = el.naturalWidth, h = el.naturalHeight;
+  const px = [[0, 0], [w, 0], [w, h], [0, h]];      // TL, TR, BR, BL
+  const gcps = _overlay.corners.map((c, i) =>
+    `-gcp ${px[i][0]} ${px[i][1]} ${c[0].toFixed(8)} ${c[1].toFixed(8)}`
+  ).join(' ');
+  const name = (_overlay.assetId || 'photo');
+  return `gdal_translate -of GTiff -a_srs EPSG:4326 ${gcps} ` +
+         `"${name}.jpg" "${name}_gcp.tif"\n` +
+         `gdalwarp -r bilinear -tps -co COMPRESS=DEFLATE -t_srs EPSG:2193 ` +
+         `"${name}_gcp.tif" "${name}_georef.tif"`;
+}
+
+
+// ── Fit panel actions ────────────────────────────────────────────────
+
+function resetFit() {
+  if (!_overlay || !_overlay.original) return;
+  _overlay.corners = _overlay.original.map(c => c.slice());
+  _fitDirty = true;
+  refreshHandlePositions();
+  redrawOverlay();
+}
+
+function saveCurrentFit(btn) {
+  if (!_overlay) return;
+  saveFit(_overlay.assetId, _overlay.corners, _overlay.opacity);
+  _fitDirty = false;
+  if (btn) {
+    const t = btn.textContent;
+    btn.textContent = 'Saved';
+    setTimeout(() => { btn.textContent = t; }, 1200);
+  }
+}
+
+function copyGdalCommand(btn) {
+  const cmd = fitToGdalCommand();
+  if (cmd) copyToClipboard(cmd, btn);
+}
+
+// Keep the overlay glued to the map through every camera change.
+map.on('move', redrawOverlay);
+map.on('rotate', redrawOverlay);
+map.on('pitch', redrawOverlay);
+map.on('resize', redrawOverlay);
+window.addEventListener('resize', positionCoordsBar);
+
+document.addEventListener('DOMContentLoaded', () => {
+  const op = document.getElementById('fit-opacity');
+  if (op) op.addEventListener('input', e => {
+    if (!_overlay) return;
+    _overlay.opacity = e.target.value / 100;
+    _overlay.el.style.opacity = _overlay.opacity;
+    document.getElementById('fit-opacity-val').textContent = e.target.value + '%';
+    _fitDirty = true;
+  });
+});
+
+
 function showFootprint(feature, pin) {
   if (!feature || !feature.geometry) return;
   if (pin) {
@@ -1566,7 +2854,7 @@ async function toggleLayerExtents(titleUnicode, label, btn) {
   const features = [];
   try {
     debugInfo('Extents: querying master FGB for ' + titleUnicode);
-    for await (const f of flatgeobuf.deserialize(MASTER_FGB, worldRect)) {
+    for await (const f of flatgeobuf.deserialize(fgbUrl(), worldRect)) {
       if (f.properties && f.properties.title_unicode === titleUnicode) {
         const geom = reprojectGeom(f.geometry);
         if (geom) features.push({ type: 'Feature', geometry: geom, properties: f.properties || {} });
@@ -1620,7 +2908,9 @@ async function toggleLayerExtents(titleUnicode, label, btn) {
     const titleUnicode = feat.properties.title_unicode || '';
     // Use the series label passed from the card (has the full human-readable title)
     // rather than title_unicode which is the machine-readable series identifier.
-    loadCogOnMap(cogUrl, label, assetId, titleUnicode);
+    loadCogOnMap(cogUrl, label, assetId, titleUnicode,
+                 _seriesKeyOf(feat.properties),
+                 (feat.properties || {}).year || '');
   };
   entry.onEnter = () => { map.getCanvas().style.cursor = 'pointer'; };
   entry.onLeave = () => { map.getCanvas().style.cursor = ''; };
@@ -1655,10 +2945,22 @@ function _assetIdFromUrl(url) {
   return (url || '').split('/').pop().replace(/\.[^.]+$/, '');
 }
 
-// Download filename: title_unicode_assetId.tif
+// Download filename. Imagery has a collection slug and a separate tile id
+// ('auckland_2024_0.25m' + 'BB31_5000_0302'), which read well combined.
+// Map sheets use the filename stem for both, so joining them would give
+// 'nzms001_n10_1977_cog_2193_NZMS001_N10_1977_cog_2193.tif'. Combine only
+// when the two are genuinely different.
 function _cogDownloadName(entry) {
   const ext = (entry.url.split('.').pop() || 'tif').toLowerCase();
-  return entry.titleUnicode + '_' + entry.assetId + '.' + ext;
+  const tu  = (entry.titleUnicode || '').trim();
+  const id  = (entry.assetId || '').trim();
+  if (!tu) return (id || 'download') + '.' + ext;
+  if (!id) return tu + '.' + ext;
+  const a = tu.toLowerCase(), b = id.toLowerCase();
+  if (a === b || b.includes(a) || a.includes(b)) {
+    return (id.length >= tu.length ? id : tu) + '.' + ext;
+  }
+  return tu + '_' + id + '.' + ext;
 }
 
 // Fetch file and trigger save-as with correct filename (bypasses cross-origin download attr restriction)
@@ -1818,7 +3120,7 @@ function _syncToggleAllBtn() {
 // @param {string} label        - Human-readable layer name (from CONFIG)
 // @param {string} assetId      - From FGB feature property 'assest_id'
 // @param {string} titleUnicode - From FGB feature property 'title_unicode'
-async function loadCogOnMap(url, label, assetId, titleUnicode) {
+async function loadCogOnMap(url, label, assetId, titleUnicode, seriesKey, year) {
   // If already loaded, just re-render (no duplicate)
   if (_cogMap.has(url)) {
     debugInfo('COG already on map: ' + url.split('/').pop());
@@ -1848,6 +3150,8 @@ async function loadCogOnMap(url, label, assetId, titleUnicode) {
     const entry = { tiff, image, minE, minN, maxE, maxN, label, url,
                     assetId: assetId,
                     titleUnicode: titleUnicode,
+                    seriesKey: seriesKey || ('coll:' + (titleUnicode || '')),
+                    year: year || '',
                     opacity: 0.9,
                     visible: true,
                     sourceId, layerId, token: 0, status: 'rendering',
@@ -2219,8 +3523,20 @@ async function renderOneCog(cog) {
     canvas.width = readW; canvas.height = readH;
     canvas.getContext('2d').putImageData(new ImageData(rgba, readW, readH), 0, 0);
 
-    // Use Blob URL instead of dataURL — much faster to encode and smaller memory footprint
-    const blob    = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
+    // Blob URL rather than dataURL — faster to encode, smaller in memory.
+    //
+    // Format matters: JPEG HAS NO ALPHA CHANNEL, so any transparent pixel
+    // flattens to black. That is invisible for LINZ imagery (fully
+    // populated rectangles) but ruins anything with transparent margins —
+    // map sheets warped from a rotated grid, and DEM nodata. So: PNG when
+    // the tile actually contains transparency, JPEG otherwise for speed.
+    let hasAlpha = false;
+    for (let i = 3; i < rgba.length; i += 4) {
+      if (rgba[i] !== 255) { hasAlpha = true; break; }
+    }
+    const blob = await new Promise(res => hasAlpha
+      ? canvas.toBlob(res, 'image/png')
+      : canvas.toBlob(res, 'image/jpeg', 0.85));
     const blobUrl = URL.createObjectURL(blob);
     if (token !== cog.token) { URL.revokeObjectURL(blobUrl); return; }
 
@@ -2288,7 +3604,9 @@ resultsEl.addEventListener('click', e => {
       cogBtn.dataset.cogUrl,
       cogBtn.dataset.cogLabel,
       cogBtn.dataset.cogAssetId,
-      cogBtn.dataset.cogTitleUnicode
+      cogBtn.dataset.cogTitleUnicode,
+      cogBtn.dataset.cogSeriesKey,
+      cogBtn.dataset.cogYear
     );
     return;
   }
@@ -2303,7 +3621,14 @@ resultsEl.addEventListener('click', e => {
       .forEach(c => c.classList.remove('expanded'));
     if (!wasOpen) {
       card.classList.add('expanded');
-      if (card._feature) showFootprint(card._feature, true);
+      if (card._feature) {
+        showFootprint(card._feature, true);
+        // Scanned photos cover small areas and cannot be draped on the
+        // map, so zoom to the footprint to show what the frame covers.
+        if (card.classList.contains('photo-card')) {
+          zoomToFootprint(card._feature);
+        }
+      }
     }
   }
 
@@ -2430,6 +3755,7 @@ function _buildShareUrl(extraParams) {
   const lng    = centre.lng.toFixed(6);
   const lat    = centre.lat.toFixed(6);
   let hash     = `${lng},${lat},${zoom}z`;
+  if (currentDataset !== 'imagery') hash += '&ds=' + currentDataset;
   if (extraParams) hash += '&' + extraParams;
   return window.location.origin + window.location.pathname + '#' + hash;
 }
@@ -2473,6 +3799,24 @@ function _shareCogLink(cogEntry) {
 // Wire panel share button
 document.getElementById('panel-share-btn').onclick = () => _shareSearch();
 
+// Show/hide Retrolens photos that already exist as georeferenced COGs.
+
+
+// ── Dataset selector ─────────────────────────────────────────────────────────
+document.getElementById('dataset-select').onchange = (e) => {
+  currentDataset = e.target.value;
+  resultsEl.innerHTML = '';
+  clearFootprint();
+  closePhoto();
+  if (currentDataset === 'imagery') loadCogSurveys();
+  const names = { imagery: 'imagery', elevation: 'elevation data',
+                  coastal: 'coastal data',
+                  retrolens: 'historic photographs',
+                  topo: 'topographic map sheets' };
+  document.getElementById('instructions').textContent =
+    `Click anywhere on the map to find ${names[currentDataset] || 'data'}`;
+};
+
 // ── Parse hash on load and restore state ─────────────────────────────────────
 (function _restoreFromHash() {
   const hash = window.location.hash.slice(1);
@@ -2495,6 +3839,13 @@ document.getElementById('panel-share-btn').onclick = () => _shareSearch();
       const [k, ...v] = p.split('=');
       return [k, decodeURIComponent(v.join('='))];
     }));
+
+    // Restore dataset first — queries below must hit the right FGB
+    if (params.ds && DATASETS[params.ds]) {
+      currentDataset = params.ds;
+      const sel = document.getElementById('dataset-select');
+      if (sel) sel.value = params.ds;
+    }
 
     // Auto-query: simulate a map click at the stored position
     if (params.q) {
@@ -2539,13 +3890,14 @@ document.getElementById('panel-share-btn').onclick = () => _shareSearch();
         const d = 50000;
         const rect = { minX: e-d, minY: n-d, maxX: e+d, maxY: n+d };
         (async () => {
-          for await (const feat of flatgeobuf.deserialize(MASTER_FGB, rect)) {
+          for await (const feat of flatgeobuf.deserialize(fgbUrl(), rect)) {
             const p = feat.properties || {};
             if (titleUnicode && (p.title_unicode || '') !== titleUnicode) continue;
             if (assetId && (p.asset_id || p.assest_id || '') !== assetId) continue;
             const url = p.asset_url_image || '';
             if (!url) continue;
-            loadCogOnMap(url, p.title || titleUnicode, p.asset_id || '', p.title_unicode || '');
+            loadCogOnMap(url, p.title || titleUnicode, p.asset_id || '',
+                         p.title_unicode || '', _seriesKeyOf(p), p.year || '');
             return;
           }
         })();
@@ -2571,6 +3923,7 @@ document.getElementById('panel-share-btn').onclick = () => _shareSearch();
 
   // Probe one direction — STRICT: must match titleUnicode exactly
   async function probeDir(cog, dir) {
+    if (!cog.seriesKey) return false;
     const key = cog.url + ':' + dir;
     if (key in _probeCache) return _probeCache[key];
     const [dE, dN] = DIR_OFFSETS[dir];
@@ -2581,11 +3934,11 @@ document.getElementById('panel-share-btn').onclick = () => _shareSearch();
     const rect = { minX: tE-pad, minY: tN-pad, maxX: tE+pad, maxY: tN+pad };
     let found = false;
     try {
-      for await (const feat of flatgeobuf.deserialize(MASTER_FGB, rect)) {
+      for await (const feat of flatgeobuf.deserialize(fgbUrl(), rect)) {
         const p = feat.properties || {};
         if (!p.asset_url_image) continue;
-        // STRICT same-series check
-        if (!cog.titleUnicode || (p.title_unicode || '') !== cog.titleUnicode) continue;
+        // Same-series check, dataset aware
+        if (!cog.seriesKey || _seriesKeyOf(p) !== cog.seriesKey) continue;
         if (_cogMap.has(p.asset_url_image)) continue; // already loaded
         found = true; break;
       }
@@ -2636,7 +3989,7 @@ document.getElementById('panel-share-btn').onclick = () => _shareSearch();
 
   async function loadNeighbour(dir) {
     const cog = _cogEntry;
-    if (!cog || !cog.titleUnicode) return;
+    if (!cog || !cog.seriesKey) return;
     const [dE, dN] = DIR_OFFSETS[dir];
     const spanE = cog.maxE - cog.minE, spanN = cog.maxN - cog.minN;
     const cE = (cog.minE + cog.maxE) / 2, cN = (cog.minN + cog.maxN) / 2;
@@ -2647,14 +4000,40 @@ document.getElementById('panel-share-btn').onclick = () => _shareSearch();
     if (btn) btn.classList.add('loading');
     hideCompass();
     try {
-      for await (const feat of flatgeobuf.deserialize(MASTER_FGB, rect)) {
+      // A map sheet is often held in several editions (1954, 1970, 1977).
+      // Collect every candidate, then take the one closest in date to the
+      // sheet already on the map — assembling a run across a district is
+      // only meaningful if the sheets are of the same era. Ties go to the
+      // later printing.
+      const cands = [];
+      for await (const feat of flatgeobuf.deserialize(fgbUrl(), rect)) {
         const p   = feat.properties || {};
         const url = p.asset_url_image || '';
         if (!url) continue;
         if (_cogMap.has(url)) continue;
-        // STRICT same-series — must match titleUnicode exactly
-        if ((p.title_unicode || '') !== cog.titleUnicode) continue;
-        loadCogOnMap(url, p.title || cog.label, p.asset_id || p.assest_id || '', p.title_unicode);
+        if (_seriesKeyOf(p) !== cog.seriesKey) continue;
+        cands.push({ url, p });
+      }
+      if (cands.length) {
+        const target = parseInt(cog.year, 10) || 0;
+        cands.sort((a, b) => {
+          const ya = parseInt(a.p.year, 10) || 0;
+          const yb = parseInt(b.p.year, 10) || 0;
+          if (target) {
+            const da = Math.abs(ya - target), db = Math.abs(yb - target);
+            if (da !== db) return da - db;
+          }
+          return yb - ya;
+        });
+        const best = cands[0];
+        if (cands.length > 1) {
+          debugInfo(`Compass ${dir}: ${cands.length} editions, chose ` +
+                    `${best.p.year || '?'} (viewing ${cog.year || '?'})`);
+        }
+        loadCogOnMap(best.url, best.p.title || cog.label,
+                     best.p.asset_id || best.p.assest_id || '',
+                     best.p.title_unicode, _seriesKeyOf(best.p),
+                     best.p.year || '');
         return;
       }
     } catch(err) {
