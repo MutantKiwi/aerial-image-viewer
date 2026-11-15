@@ -912,10 +912,14 @@ function _collectionPath(url) {
 // format=png, and WebP support in desktop GIS is patchy.
 const BASEMAPS_WMTS_FORMAT = 'image/png';
 
-// Capabilities URL without the key — the key rides as a parameter, which
-// is how LINZ documents it for Esri clients.
-const basemapsWmtsBase = name =>
-  `https://basemaps.linz.govt.nz/v1/tiles/${name}/NZTM2000Quad/WMTSCapabilities.xml`;
+// The key goes in the URL. LINZ's Esri guidance says to strip it and pass
+// it as a custom parameter, but that is written for the ArcGIS Online web
+// viewer; ArcGIS Pro does not apply capabilitiesParameters to its
+// GetCapabilities request, so it asked without a key and LINZ answered
+// HTTP 400, leaving a broken layer. Tiles need no extra help once the
+// capabilities loads: the ResourceURL templates inside it already carry
+// the key.
+const basemapsWmtsBase = name => basemapsWmtsUrl(name);
 
 const _xmlEsc = s => String(s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -995,7 +999,6 @@ function qgisQlrFor(name, title) {
 // empty Source tab — it has nothing it recognises to connect to.
 function arcgisLyrxFor(name, title) {
   const path = 'CIMPATH=map/' + name.replace(/[^a-z0-9]+/gi, '_') + '.xml';
-  const key  = { type: 'PropertySet', propertySetItems: ['api', LINZ_KEY] };
   return JSON.stringify({
     type: 'CIMLayerDocument',
     version: '3.0.0',
@@ -1031,8 +1034,6 @@ function arcgisLyrxFor(name, title) {
         style: 'default',
         imageFormat: BASEMAPS_WMTS_FORMAT,
         tileMatrixSet: 'NZTM2000Quad',
-        capabilitiesParameters: key,
-        mapParameters: key,
       },
     }],
     binaryReferences: [],
