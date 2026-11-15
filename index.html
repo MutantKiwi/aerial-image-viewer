@@ -920,6 +920,26 @@ const basemapsWmtsBase = name =>
 const _xmlEsc = s => String(s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+// Element text only needs these three; leaving quotes alone keeps the WKT legible.
+const _xmlText = s => String(s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+// EPSG:2193 spelled out in full. An <srs> block carrying only <authid> is
+// not enough — QGIS then has no definition to place the layer with and
+// draws it in the wrong part of the world. Values are the EPSG register's,
+// via PROJ.
+const NZTM_WKT = 'PROJCS["NZGD2000 / New Zealand Transverse Mercator 2000",GEOGCS["NZGD2000",DATUM["New_Zealand_Geodetic_Datum_2000",SPHEROID["GRS 1980",6378137,298.257222101,AUTHORITY["EPSG","7019"]],AUTHORITY["EPSG","6167"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],AUTHORITY["EPSG","4167"]],PROJECTION["Transverse_Mercator"],PARAMETER["latitude_of_origin",0],PARAMETER["central_meridian",173],PARAMETER["scale_factor",0.9996],PARAMETER["false_easting",1600000],PARAMETER["false_northing",10000000],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AUTHORITY["EPSG","2193"]]';
+const NZTM_PROJ4 = '+proj=tmerc +lat_0=0 +lon_0=173 +k=0.9996 +x_0=1600000 +y_0=10000000 +ellps=GRS80 +units=m +no_defs';
+const NZTM_SRS_XML = `<spatialrefsys nativeFormat="Wkt">
+        <wkt>${_xmlText(NZTM_WKT)}</wkt>
+        <proj4>${_xmlText(NZTM_PROJ4)}</proj4>
+        <srid>2193</srid>
+        <authid>EPSG:2193</authid>
+        <description>NZGD2000 / New Zealand Transverse Mercator 2000</description>
+        <projectionacronym>tmerc</projectionacronym>
+        <ellipsoidacronym>EPSG:7019</ellipsoidacronym>
+        <geographicflag>false</geographicflag>
+      </spatialrefsys>`;
 
 // QGIS layer definition. The 'wms' provider serves WMTS too; the whole
 // capabilities URL is percent-encoded into the url= parameter because it
@@ -952,7 +972,7 @@ function qgisQlrFor(name, title) {
       <id>${id}</id>
       <datasource>${u}</datasource>
       <layername>${t}</layername>
-      <srs><spatialrefsys><authid>EPSG:2193</authid></spatialrefsys></srs>
+      <srs>${NZTM_SRS_XML}</srs>
       <provider>wms</provider>
       <noData/>
       <pipe>
@@ -965,8 +985,14 @@ function qgisQlrFor(name, title) {
 `;
 }
 
-// ArcGIS Pro layer file. Shape follows Esri's published CIM spec:
-// CIMLayerDocument > CIMRasterLayer > CIMWMTSServiceConnection.
+// ArcGIS Pro layer file, per Esri's published CIM spec:
+// CIMLayerDocument > CIMTiledServiceLayer > CIMWMTSServiceConnection.
+//
+// CIMTiledServiceLayer, not CIMRasterLayer: a service layer carries its
+// source in serviceConnection (CIMServiceLayerDefinition), whereas a raster
+// layer expects a dataConnection to a workspace. Put a WMTS connection in
+// dataConnection and Pro builds the layer, names it, and then shows an
+// empty Source tab — it has nothing it recognises to connect to.
 function arcgisLyrxFor(name, title) {
   const path = 'CIMPATH=map/' + name.replace(/[^a-z0-9]+/gi, '_') + '.xml';
   const key  = { type: 'PropertySet', propertySetItems: ['api', LINZ_KEY] };
@@ -976,7 +1002,7 @@ function arcgisLyrxFor(name, title) {
     build: 0,
     layers: [path],
     layerDefinitions: [{
-      type: 'CIMRasterLayer',
+      type: 'CIMTiledServiceLayer',
       name: title || name,
       uRI: path,
       useSourceMetadata: true,
@@ -992,7 +1018,7 @@ function arcgisLyrxFor(name, title) {
       refreshRateUnit: 'esriTimeUnitsSeconds',
       blendingMode: 'Alpha',
       allowDrapingOnIntegratedMesh: true,
-      dataConnection: {
+      serviceConnection: {
         type: 'CIMWMTSServiceConnection',
         serverConnection: {
           type: 'CIMInternetServerConnection',
