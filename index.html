@@ -903,6 +903,133 @@ function _collectionPath(url) {
   return i === -1 ? '' : url.slice(i);
 }
 
+// ── Desktop GIS layer files ──────────────────────────────────────────
+// QGIS and ArcGIS Pro both consume the NZTM2000Quad WMTS directly, which
+// matches the FGB's own EPSG:2193. These build a ready-made layer file so
+// neither needs a connection set up by hand.
+//
+// PNG, not the WebP the map uses: LINZ's own Esri guidance asks for
+// format=png, and WebP support in desktop GIS is patchy.
+const BASEMAPS_WMTS_FORMAT = 'image/png';
+
+// Capabilities URL without the key — the key rides as a parameter, which
+// is how LINZ documents it for Esri clients.
+const basemapsWmtsBase = name =>
+  `https://basemaps.linz.govt.nz/v1/tiles/${name}/NZTM2000Quad/WMTSCapabilities.xml`;
+
+const _xmlEsc = s => String(s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+
+// QGIS layer definition. The 'wms' provider serves WMTS too; the whole
+// capabilities URL is percent-encoded into the url= parameter because it
+// carries its own query string, which would otherwise be parsed as more
+// URI parameters.
+function qgisQlrFor(name, title) {
+  const uri = [
+    'contextualWMSLegend=0',
+    'crs=EPSG:2193',
+    'dpiMode=7',
+    'format=' + encodeURIComponent(BASEMAPS_WMTS_FORMAT),
+    'layers=' + encodeURIComponent(name),
+    'styles=',
+    'tileMatrixSet=NZTM2000Quad',
+    'url=' + encodeURIComponent(basemapsWmtsUrl(name)),
+  ].join('&');
+  const id = name.replace(/[^a-z0-9]+/gi, '_') + '_wmts';
+  const t  = _xmlEsc(title || name);
+  const u  = _xmlEsc(uri);
+  return `<!DOCTYPE qgis-layer-definition>
+<qlr>
+  <layer-tree-group checked="Qt::Checked" expanded="1" name="">
+    <customproperties/>
+    <layer-tree-layer checked="Qt::Checked" expanded="1" id="${id}" name="${t}" providerKey="wms" source="${u}">
+      <customproperties/>
+    </layer-tree-layer>
+  </layer-tree-group>
+  <maplayers>
+    <maplayer type="raster" hasScaleBasedVisibilityFlag="0" minScale="1e+08" maxScale="0" autoRefreshEnabled="0" refreshOnNotifyEnabled="0">
+      <id>${id}</id>
+      <datasource>${u}</datasource>
+      <layername>${t}</layername>
+      <srs><spatialrefsys><authid>EPSG:2193</authid></spatialrefsys></srs>
+      <provider>wms</provider>
+      <noData/>
+      <pipe>
+        <rasterrenderer type="singlebandcolordata" band="1" opacity="1" alphaBand="-1"/>
+      </pipe>
+      <blendMode>0</blendMode>
+    </maplayer>
+  </maplayers>
+</qlr>
+`;
+}
+
+// ArcGIS Pro layer file. Shape follows Esri's published CIM spec:
+// CIMLayerDocument > CIMRasterLayer > CIMWMTSServiceConnection.
+function arcgisLyrxFor(name, title) {
+  const path = 'CIMPATH=map/' + name.replace(/[^a-z0-9]+/gi, '_') + '.xml';
+  const key  = { type: 'PropertySet', propertySetItems: ['api', LINZ_KEY] };
+  return JSON.stringify({
+    type: 'CIMLayerDocument',
+    version: '3.0.0',
+    build: 0,
+    layers: [path],
+    layerDefinitions: [{
+      type: 'CIMRasterLayer',
+      name: title || name,
+      uRI: path,
+      useSourceMetadata: true,
+      description: title || name,
+      layerType: 'Operational',
+      showLegends: true,
+      visibility: true,
+      displayCacheType: 'Permanent',
+      maxDisplayCacheAge: 5,
+      showPopups: true,
+      serviceLayerID: -1,
+      refreshRate: -1,
+      refreshRateUnit: 'esriTimeUnitsSeconds',
+      blendingMode: 'Alpha',
+      allowDrapingOnIntegratedMesh: true,
+      dataConnection: {
+        type: 'CIMWMTSServiceConnection',
+        serverConnection: {
+          type: 'CIMInternetServerConnection',
+          anonymous: true,
+          hideUserProperty: true,
+          URL: basemapsWmtsBase(name),
+        },
+        layerName: name,
+        version: '1.0.0',
+        style: 'default',
+        imageFormat: BASEMAPS_WMTS_FORMAT,
+        tileMatrixSet: 'NZTM2000Quad',
+        capabilitiesParameters: key,
+        mapParameters: key,
+      },
+    }],
+    binaryReferences: [],
+    elevationSurfaces: [],
+    rGBColorProfile: 'sRGB IEC61966-2.1',
+    cMYKColorProfile: 'U.S. Web Coated (SWOP) v2',
+  }, null, 2);
+}
+
+// Hand a generated string to the browser as a file.
+function downloadTextFile(filename, text, mime) {
+  try {
+    const url = URL.createObjectURL(new Blob([text], { type: mime || 'text/plain' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    debugLog(`Downloaded ${filename}`);
+  } catch (err) {
+    debugLog(`ERR download ${filename}: ${String(err.message).slice(0, 60)}`);
+  }
+}
+
 // Resolve one feature to its Basemaps layer name, or '' when it has none.
 // Near-infrared collections legitimately have none.
 function basemapsLayerFor(props) {
@@ -1471,6 +1598,18 @@ function appendCard(feature, index, container) {
           title="NZTM2000Quad WMTS — paste into QGIS or ArcGIS Pro">
           <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
           Copy WMTS 2193
+        </button>
+        <button class="btn btn-wmts"
+          data-gis-file="qlr" data-gis-layer="${escHtml(bmName)}" data-gis-title="${escHtml(label)}"
+          title="Download a QGIS layer file for this survey's NZTM2000Quad WMTS">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          QGIS .qlr
+        </button>
+        <button class="btn btn-wmts"
+          data-gis-file="lyrx" data-gis-layer="${escHtml(bmName)}" data-gis-title="${escHtml(label)}"
+          title="Download an ArcGIS Pro layer file for this survey's NZTM2000Quad WMTS">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          ArcGIS .lyrx
         </button>` : ''}
       </div>
     </div>`;
@@ -2485,6 +2624,20 @@ resultsEl.addEventListener('click', e => {
   if (bmBtn) {
     e.stopPropagation();
     toggleBasemapsLayer(bmBtn.dataset.bmLayer, bmBtn.dataset.bmLabel);
+    return;
+  }
+
+  // ── Desktop GIS layer file download ──────────────────────────────
+  const gisBtn = e.target.closest('[data-gis-file]');
+  if (gisBtn) {
+    e.stopPropagation();
+    const layer = gisBtn.dataset.gisLayer;
+    const title = gisBtn.dataset.gisTitle;
+    if (gisBtn.dataset.gisFile === 'qlr') {
+      downloadTextFile(layer + '.qlr', qgisQlrFor(layer, title), 'application/xml');
+    } else {
+      downloadTextFile(layer + '.lyrx', arcgisLyrxFor(layer, title), 'application/json');
+    }
     return;
   }
 
