@@ -998,18 +998,27 @@ function qgisQlrFor(name, title) {
 // dataConnection and Pro builds the layer, names it, and then shows an
 // empty Source tab — it has nothing it recognises to connect to.
 function arcgisLyrxFor(name, title) {
-  const path = 'CIMPATH=map/' + name.replace(/[^a-z0-9]+/gi, '_') + '.xml';
+  const slug = name.replace(/[^a-z0-9]+/gi, '_');
+  const path = 'CIMPATH=Map/' + slug + '.json';
+  // The canonical Ground surface id Pro writes, so two of these layer files
+  // added to one map share a surface rather than each contributing its own.
+  const elev = 'CIMPATH=Map/883b46291e364aee971e19cba46f62d7.json';
   return JSON.stringify({
     type: 'CIMLayerDocument',
-    version: '3.0.0',
-    build: 0,
+    version: '3.7.0',
+    build: 1904,
     layers: [path],
     layerDefinitions: [{
       type: 'CIMTiledServiceLayer',
       name: title || name,
       uRI: path,
+      sourceModifiedTime: { type: 'TimeInstant' },
       useSourceMetadata: true,
-      description: title || name,
+      description: 'National map tile service provided by Land Information New Zealand',
+      layerElevation: {
+        type: 'CIMLayerElevationSurface',
+        elevationSurfaceLayerURI: elev,
+      },
       layerType: 'Operational',
       showLegends: true,
       visibility: true,
@@ -1023,23 +1032,68 @@ function arcgisLyrxFor(name, title) {
       allowDrapingOnIntegratedMesh: true,
       serviceConnection: {
         type: 'CIMWMTSServiceConnection',
-        serverConnection: {
-          type: 'CIMInternetServerConnection',
-          anonymous: true,
-          hideUserProperty: true,
-          URL: basemapsWmtsBase(name),
-        },
         layerName: name,
         version: '1.0.0',
+        // CIMProjectServerConnection, not CIMInternetServerConnection: only
+        // this one carries serverType, which is how Pro learns the endpoint
+        // is WMTS. Without it Pro shows the stored metadata and never
+        // connects. Note the lowercase 'url' — the CIM spec documents the
+        // inherited property as 'URL', but Pro writes and reads 'url' here.
+        serverConnection: {
+          type: 'CIMProjectServerConnection',
+          anonymous: true,
+          hideUserProperty: true,
+          url: basemapsWmtsBase(name),
+          connectionMode: 'Consumer',
+          serverType: 'WMTS',
+          useDefaultStagingFolder: true,
+        },
         style: 'default',
         imageFormat: BASEMAPS_WMTS_FORMAT,
-        tileMatrixSet: 'NZTM2000Quad',
+        capabilitiesParameters: { type: 'PropertySet', propertySetItems: [] },
       },
     }],
-    binaryReferences: [],
-    elevationSurfaces: [],
     rGBColorProfile: 'sRGB IEC61966-2.1',
     cMYKColorProfile: 'U.S. Web Coated (SWOP) v2',
+    elevationSurfaceLayerDefinitions: [{
+      type: 'CIMElevationSurfaceLayer',
+      name: 'Ground',
+      uRI: elev,
+      sourceModifiedTime: { type: 'TimeInstant' },
+      useSourceMetadata: true,
+      description: 'Ground',
+      expanded: true,
+      layer3DProperties: {
+        type: 'CIM3DLayerProperties',
+        castShadows: true,
+        isLayerLit: true,
+        layerFaceCulling: 'None',
+        preloadTextureCutoffHigh: 0.3,
+        preloadTextureCutoffLow: 0.6,
+        textureCutoffHigh: 0.3,
+        textureCutoffLow: 0.6,
+        useCompressedTextures: true,
+        verticalExaggeration: 1,
+        exaggerationMode: 'ScaleZ',
+        lighting: 'OneSideDataNormal',
+        optimizeMarkerTransparency: true,
+      },
+      layerType: 'Operational',
+      showLegends: false,
+      visibility: true,
+      displayCacheType: 'Permanent',
+      maxDisplayCacheAge: 5,
+      showPopups: true,
+      serviceLayerID: -1,
+      refreshRate: -1,
+      refreshRateUnit: 'esriTimeUnitsSeconds',
+      blendingMode: 'Alpha',
+      allowDrapingOnIntegratedMesh: true,
+      elevationMode: 'BaseGlobeSurface',
+      verticalExaggeration: 1,
+      color: { type: 'CIMRGBColor', values: [255, 255, 255, 100] },
+      surfaceTINShadingMode: 'Smooth',
+    }],
   }, null, 2);
 }
 
