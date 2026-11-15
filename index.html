@@ -330,6 +330,8 @@ window._zstdReady = new Promise((resolve, reject) => {
     min-width: 0;
   }
   .cog-bar-row-asset { color: var(--accent); font-size: 10px; flex-shrink: 0; }
+  /* WMTS rows name the service here instead of a tile, in the WMTS green. */
+  .cog-bar-row-asset.is-wmts { color: var(--accent3); font-weight: 700; }
   .cog-bar-row-status { flex-shrink: 0; width: 14px; display: flex; align-items: center; justify-content: center; }
   .cog-bar-row-status .row-spinner {
     width: 10px; height: 10px; border: 1.5px solid rgba(71,200,255,0.2);
@@ -835,12 +837,18 @@ const CONFIG = {
 // LINZ BASEMAPS LAYER LOOKUP
 // ═══════════════════════════════════════════════════════════════════
 // Most nz-imagery STAC collections are also published as a LINZ Basemaps
-// tile layer. basemaps_layers.json maps '<region>/<title_unicode>' — both
-// fields present on every feature in the master FGB — to the Basemaps
-// layer name. Keying on those two fields rather than on collection_url is
-// deliberate: the Basemaps catalogue spells the S3 host
-// 's3.ap-southeast-2' where the harvester spells it 's3-ap-southeast-2',
-// so a full-URL join silently matches nothing.
+// tile layer. basemaps_layers.json maps the collection.json path to the
+// Basemaps layer name.
+//
+// The HOST is stripped from the key because the Basemaps catalogue spells
+// it 's3.ap-southeast-2' where the harvester spells it
+// 's3-ap-southeast-2' — a full-URL join silently matches nothing.
+//
+// The full PATH is used rather than region + folder because the rgb and
+// rgbnir collections of one survey share a folder, and LINZ publishes no
+// near-infrared tile layers. Keying on the folder hands a near-infrared
+// collection the RGB mosaic, which renders true colour where the card
+// promises false colour.
 //
 // Indexes harvested from Nov 2026 carry basemaps_name on the feature
 // itself; this file is the fallback that makes the lookup work against
@@ -882,12 +890,22 @@ function ensureBasemapsIndex() {
   return _basemapsLoading;
 }
 
+// Strip scheme and host from a collection URL, leaving the path that keys
+// the mapping: '/canterbury/ashburton_2020_0.075m/rgb/2193/collection.json'
+function _collectionPath(url) {
+  if (!url) return '';
+  const i = url.indexOf('/', url.indexOf('//') + 2);
+  return i === -1 ? '' : url.slice(i);
+}
+
 // Resolve one feature to its Basemaps layer name, or '' when it has none.
+// Near-infrared collections legitimately have none.
 function basemapsLayerFor(props) {
   if (!props) return '';
   if (props.basemaps_name) return props.basemaps_name;   // newer index
   if (!_basemapsIndex) return '';
-  return _basemapsIndex[`${props.region}/${props.title_unicode}`] || '';
+  const path = _collectionPath(props.collection_url);
+  return (path && _basemapsIndex[path]) || '';
 }
 
 // Warm the lookup at load so it is ready before the first click.
@@ -1436,11 +1454,12 @@ function appendCard(feature, index, container) {
         </button>
 ` : ''}
         ${bmName ? `
-        <button class="btn btn-wmts${_bmLayers.has(bmName) ? ' bm-active' : ''}"
+        <button class="btn btn-wmts${bmIsActive(bmName) ? ' bm-active' : ''}"
           data-bm-layer="${escHtml(bmName)}"
+          data-bm-label="${escHtml(label)}"
           title="Add the LINZ Basemaps WMTS for this survey — the whole mosaic, not just this sheet">
           <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-          <span class="bm-label">${_bmLayers.has(bmName) ? ' Hide WMTS' : ' Add WMTS'}</span>
+          <span class="bm-label">${bmIsActive(bmName) ? ' Hide WMTS' : ' Add WMTS'}</span>
         </button>
         <button class="btn btn-wmts"
           onclick="copyToClipboard('${escHtml(basemapsWmtsUrl(bmName))}', this)"
@@ -1802,11 +1821,13 @@ function removeCogOverlay(url) {
     try { if (map.getLayer(entry.layerId))   map.removeLayer(entry.layerId);   } catch(e) {}
     try { if (map.getSource(entry.sourceId)) map.removeSource(entry.sourceId); } catch(e) {}
     _cogMap.delete(url);
+    if (entry.kind === 'wmts') debugLog(`WMTS layer off: ${entry.basemapsName}`);
   } else {
     // Remove all
     _cogMap.forEach((entry, u) => removeCogOverlay(u));
   }
   _updateCogBar();
+  _syncBmButtons();
 }
 
 // Rebuild the floating "SHEETS ON MAP" pill from the current _cogMap state.
@@ -1825,7 +1846,12 @@ function _updateCogBar() {
   }
 
   bar.classList.add('visible');
-  count.textContent = _cogMap.size + ' sheet' + (_cogMap.size !== 1 ? 's' : '');
+  const nWmts  = [..._cogMap.values()].filter(e => e.kind === 'wmts').length;
+  const nSheet = _cogMap.size - nWmts;
+  count.textContent = [
+    nSheet ? nSheet + ' sheet' + (nSheet !== 1 ? 's' : '') : '',
+    nWmts  ? nWmts  + ' WMTS' : '',
+  ].filter(Boolean).join(' · ');
 
   const entries = [..._cogMap.entries()];
   list.innerHTML = entries.map(([url, e], idx) => {
@@ -1838,17 +1864,22 @@ function _updateCogBar() {
       : '<div class="row-spinner"></div>';
     const opacity = e.opacity !== undefined ? e.opacity : 0.9;
     const opPct   = Math.round(opacity * 100);
+    // A WMTS row is a whole served mosaic, so it has no tile name to show
+    // and nothing to download: the tile-name slot names the service instead.
+    const isWmts  = e.kind === 'wmts';
     return `
     <div class="cog-bar-row" data-row-idx="${idx}">
       <span class="cog-bar-row-status">${statusHtml}</span>
       <span class="cog-bar-row-label" title="${escHtml(e.label)}">${escHtml(e.label)}</span>
-      <span class="cog-bar-row-asset">${escHtml(e.assetId || '—')}</span>
+      <span class="cog-bar-row-asset${isWmts ? ' is-wmts' : ''}">${isWmts ? 'WMTS' : escHtml(e.assetId || '—')}</span>
       <div class="cog-bar-row-opacity">
         <input class="cog-opacity-slider" type="range" min="0" max="100" step="5"
           value="${opPct}" data-layer-id="${escHtml(e.layerId)}" title="Opacity">
         <span class="cog-bar-row-opacity-label">${opPct}%</span>
       </div>
-      <a class="cog-bar-row-dl" href="#" data-dl-url="${escHtml(url)}" data-dl-name="${escHtml(_cogDownloadName(e))}" title="Download GeoTIFF">↓</a>
+      ${isWmts
+        ? '<span class="cog-bar-row-dl" style="visibility:hidden">↓</span>'
+        : `<a class="cog-bar-row-dl" href="#" data-dl-url="${escHtml(url)}" data-dl-name="${escHtml(_cogDownloadName(e))}" title="Download GeoTIFF">↓</a>`}
       <button class="cog-bar-row-remove" data-remove-url="${escHtml(url)}">✕</button>
     </div>`;
   }).join('');
@@ -2374,29 +2405,37 @@ map.on('moveend', renderAllCogs);
 
 // ═══════════════════════════════════════════════════════════════════
 // RESULTS PANEL — DELEGATED EVENT HANDLER
-// Active LINZ Basemaps tile layers, keyed by layer name.
-const _bmLayers = new Map();
+// WMTS layers live in _cogMap alongside the COG overlays, under a
+// 'wmts:<name>' key and kind 'wmts'. Sharing the registry means the
+// SHEETS ON MAP bar gives them opacity, visibility, toggle-all and
+// clear-all for free, rather than growing a second panel that does the
+// same things slightly differently.
+const _bmKey = name => 'wmts:' + name;
+const bmIsActive = name => _cogMap.has(_bmKey(name));
 
 function _bmIds(name) {
   const slug = String(name).replace(/[^a-z0-9]+/gi, '-').toLowerCase();
   return { sourceId: 'bm-' + slug + '-src', layerId: 'bm-' + slug + '-lyr' };
 }
 
-// Add or remove the Basemaps raster tiles for one collection.
-// Unlike a COG overlay this is a served tile pyramid, so there is nothing
-// to decode or render — MapLibre streams it like any other raster source.
-function toggleBasemapsLayer(name, btn) {
-  if (_bmLayers.has(name)) {
-    const { sourceId, layerId } = _bmLayers.get(name);
-    try { if (map.getLayer(layerId))   map.removeLayer(layerId);   } catch (e) {}
-    try { if (map.getSource(sourceId)) map.removeSource(sourceId); } catch (e) {}
-    _bmLayers.delete(name);
-    if (btn) {
-      btn.classList.remove('bm-active');
-      const lbl = btn.querySelector('.bm-label');
-      if (lbl) lbl.textContent = ' Add WMTS';
-    }
-    debugLog(`Basemaps layer off: ${name}`);
+// Bring every card's WMTS button in line with what is actually on the map,
+// so removing a layer from the bar also un-highlights its card.
+function _syncBmButtons() {
+  document.querySelectorAll('[data-bm-layer]').forEach(btn => {
+    const on  = bmIsActive(btn.dataset.bmLayer);
+    btn.classList.toggle('bm-active', on);
+    const lbl = btn.querySelector('.bm-label');
+    if (lbl) lbl.textContent = on ? ' Hide WMTS' : ' Add WMTS';
+  });
+}
+
+// Add or remove the Basemaps tiles for one collection. Unlike a COG overlay
+// this is a served tile pyramid, so there is nothing to fetch or decode —
+// MapLibre streams it like any other raster source, and the entry is 'done'
+// the moment it is added.
+function toggleBasemapsLayer(name, label) {
+  if (bmIsActive(name)) {
+    removeCogOverlay(_bmKey(name));
     return;
   }
 
@@ -2414,17 +2453,20 @@ function toggleBasemapsLayer(name, btn) {
       id: layerId, type: 'raster', source: sourceId,
       paint: { 'raster-opacity': 1 },
     }, before);
-    _bmLayers.set(name, { sourceId, layerId });
-    if (btn) {
-      btn.classList.add('bm-active');
-      const lbl = btn.querySelector('.bm-label');
-      if (lbl) lbl.textContent = ' Hide WMTS';
-    }
-    debugLog(`Basemaps layer on: ${name}`);
+    _cogMap.set(_bmKey(name), {
+      kind: 'wmts', basemapsName: name,
+      label: label || name,
+      sourceId, layerId, token: 0, status: 'done',
+      opacity: 1, visible: true,
+    });
+    debugLog(`WMTS layer on: ${name}`);
   } catch (err) {
-    debugLog(`ERR basemaps layer ${name}: ${String(err.message).slice(0, 60)}`);
+    debugLog(`ERR WMTS layer ${name}: ${String(err.message).slice(0, 60)}`);
     try { if (map.getSource(sourceId)) map.removeSource(sourceId); } catch (e) {}
+    return;
   }
+  _updateCogBar();
+  _syncBmButtons();
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2437,7 +2479,7 @@ resultsEl.addEventListener('click', e => {
   const bmBtn = e.target.closest('[data-bm-layer]');
   if (bmBtn) {
     e.stopPropagation();
-    toggleBasemapsLayer(bmBtn.dataset.bmLayer, bmBtn);
+    toggleBasemapsLayer(bmBtn.dataset.bmLayer, bmBtn.dataset.bmLabel);
     return;
   }
 
@@ -3038,7 +3080,8 @@ document.getElementById('cog-bar-toggle-all').onclick = () => {
 // short stagger between requests to avoid overwhelming the browser/network.
 async function downloadAllCogs() {
   const btn = document.getElementById('cog-bar-dl-all');
-  const done = [..._cogMap.values()].filter(e => e.status === 'done');
+  // WMTS rows are served mosaics, not files — nothing to download.
+  const done = [..._cogMap.values()].filter(e => e.status === 'done' && e.kind !== 'wmts');
   if (!done.length) { debugInfo('No rendered sheets to download'); return; }
 
   btn.disabled = true;
