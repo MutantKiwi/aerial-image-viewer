@@ -860,7 +860,12 @@ const CONFIG = {
 // MapLibre cannot consume an NZTM tile matrix set, so the viewer uses the
 // WebMercatorQuad XYZ endpoint. The NZTM2000Quad WMTS — which matches the
 // FGB's own EPSG:2193 — is offered as a copyable URL for QGIS and ArcGIS.
-const BASEMAPS_INDEX_URL = 'https://imagery.mutant.kiwi/basemaps_layers.json';
+// Versioned: the key format changed once already (region+folder → full
+// collection path), and a browser holding the previous file against the
+// current lookup matches nothing and silently drops every button. Bump v
+// whenever the key format changes, so a cached copy can never outlive the
+// code that understands it.
+const BASEMAPS_INDEX_URL = 'https://imagery.mutant.kiwi/basemaps_layers.json?v=2';
 
 const basemapsXyzUrl  = name =>
   `https://basemaps.linz.govt.nz/v1/tiles/${name}/WebMercatorQuad/{z}/{x}/{y}.webp?api=${LINZ_KEY}`;
