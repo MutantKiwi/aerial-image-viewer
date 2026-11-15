@@ -229,6 +229,12 @@ window._zstdReady = new Promise((resolve, reject) => {
   .btn-primary:hover { filter: brightness(1.1); }
   .btn-secondary { background: transparent; color: var(--accent2); border: 1px solid var(--accent2); }
   .btn-secondary:hover { background: rgba(71,200,255,0.1); }
+  /* A Basemaps tile layer currently on the map — filled, so the card shows
+     at a glance which surveys are drawn without looking at the map. */
+  .btn-secondary.bm-active {
+    background: var(--accent2); color: #04121c; border-color: var(--accent2);
+  }
+  .btn-secondary.bm-active:hover { background: #7fd9ff; border-color: #7fd9ff; }
   .btn-ghost { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
   .btn-ghost:hover { color: var(--text); border-color: rgba(255,255,255,0.15); }
 
@@ -821,6 +827,68 @@ const CONFIG = {
 };
 
 // ═══════════════════════════════════════════════════════════════════
+// LINZ BASEMAPS LAYER LOOKUP
+// ═══════════════════════════════════════════════════════════════════
+// Most nz-imagery STAC collections are also published as a LINZ Basemaps
+// tile layer. basemaps_layers.json maps '<region>/<title_unicode>' — both
+// fields present on every feature in the master FGB — to the Basemaps
+// layer name. Keying on those two fields rather than on collection_url is
+// deliberate: the Basemaps catalogue spells the S3 host
+// 's3.ap-southeast-2' where the harvester spells it 's3-ap-southeast-2',
+// so a full-URL join silently matches nothing.
+//
+// Indexes harvested from Nov 2026 carry basemaps_name on the feature
+// itself; this file is the fallback that makes the lookup work against
+// the index that is live today.
+//
+// Only the layer NAME is stored anywhere. Both endpoint URLs derive from
+// it, and it keeps an api key out of the published index.
+//
+// MapLibre cannot consume an NZTM tile matrix set, so the viewer uses the
+// WebMercatorQuad XYZ endpoint. The NZTM2000Quad WMTS — which matches the
+// FGB's own EPSG:2193 — is offered as a copyable URL for QGIS and ArcGIS.
+const BASEMAPS_INDEX_URL = 'https://imagery.mutant.kiwi/basemaps_layers.json';
+
+const basemapsXyzUrl  = name =>
+  `https://basemaps.linz.govt.nz/v1/tiles/${name}/WebMercatorQuad/{z}/{x}/{y}.webp?api=${LINZ_KEY}`;
+const basemapsWmtsUrl = name =>
+  `https://basemaps.linz.govt.nz/v1/tiles/${name}/NZTM2000Quad/WMTSCapabilities.xml?api=${LINZ_KEY}`;
+
+let _basemapsIndex   = null;  // null = not loaded yet; {} = loaded or unavailable
+let _basemapsLoading = null;
+
+// Fetch the mapping once. Failure is not an error worth surfacing: the
+// Basemaps button simply never appears and everything else still works.
+function ensureBasemapsIndex() {
+  if (_basemapsIndex)   return Promise.resolve(_basemapsIndex);
+  if (_basemapsLoading) return _basemapsLoading;
+  _basemapsLoading = fetch(BASEMAPS_INDEX_URL)
+    .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+    .then(doc => {
+      _basemapsIndex = (doc && doc.layers) || doc || {};
+      debugLog(`Basemaps index: ${Object.keys(_basemapsIndex).length} collections`);
+      return _basemapsIndex;
+    })
+    .catch(err => {
+      debugLog(`Basemaps index unavailable: ${String(err.message).slice(0, 60)}`);
+      _basemapsIndex = {};
+      return _basemapsIndex;
+    });
+  return _basemapsLoading;
+}
+
+// Resolve one feature to its Basemaps layer name, or '' when it has none.
+function basemapsLayerFor(props) {
+  if (!props) return '';
+  if (props.basemaps_name) return props.basemaps_name;   // newer index
+  if (!_basemapsIndex) return '';
+  return _basemapsIndex[`${props.region}/${props.title_unicode}`] || '';
+}
+
+// Warm the lookup at load so it is ready before the first click.
+ensureBasemapsIndex();
+
+// ═══════════════════════════════════════════════════════════════════
 // MAP INIT
 // ═══════════════════════════════════════════════════════════════════
 // Initialise MapLibre map centred on Northland, NZ.
@@ -1155,6 +1223,16 @@ function pointInPolygon(x, y, ring) {
 // Extracted as a named function so it can be called from both the
 // map click handler and the URL hash restore path.
 function _renderResults(features) {
+  // The Basemaps buttons need the lookup. If it has not arrived yet, render
+  // without them now and repaint once it does, rather than making every
+  // caller await a file that only decorates the cards. Guarded against
+  // recursion: after loading, _basemapsIndex is an object, never null.
+  if (_basemapsIndex === null) {
+    ensureBasemapsIndex().then(() => {
+      if (window._lastResults === features) _renderResults(features);
+    });
+  }
+
   resultsEl.innerHTML = '';
   const total = features.length;
 
@@ -1304,6 +1382,10 @@ function appendCard(feature, index, container) {
   const isNIR    = /near.?infrared/i.test(label);
   const indexBg  = isNIR ? '#e84070' : 'var(--accent)';
 
+  // LINZ Basemaps layer for this collection, '' when it has none
+  // (nautical charts and a handful of surveys are not published there).
+  const bmName = basemapsLayerFor(props);
+
   // Metadata rows shown in the expanded card body
   const SHOW_KEYS = ['region', 'year', 'asset_id', 'title_unicode'];
   const metaKeys  = SHOW_KEYS.filter(k => props[k] != null && props[k] !== '');
@@ -1348,7 +1430,19 @@ function appendCard(feature, index, container) {
           Copy URL
         </button>
 ` : ''}
-
+        ${bmName ? `
+        <button class="btn btn-secondary${_bmLayers.has(bmName) ? ' bm-active' : ''}"
+          data-bm-layer="${escHtml(bmName)}"
+          title="LINZ Basemaps tiles for this survey — the whole mosaic, not just this sheet">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+          <span class="bm-label">${_bmLayers.has(bmName) ? ' Hide tiles' : ' Basemaps tiles'}</span>
+        </button>
+        <button class="btn btn-secondary"
+          onclick="copyToClipboard('${escHtml(basemapsWmtsUrl(bmName))}', this)"
+          title="NZTM2000Quad WMTS — paste into QGIS or ArcGIS Pro">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          Copy WMTS 2193
+        </button>` : ''}
       </div>
     </div>`;
 
@@ -2275,11 +2369,73 @@ map.on('moveend', renderAllCogs);
 
 // ═══════════════════════════════════════════════════════════════════
 // RESULTS PANEL — DELEGATED EVENT HANDLER
+// Active LINZ Basemaps tile layers, keyed by layer name.
+const _bmLayers = new Map();
+
+function _bmIds(name) {
+  const slug = String(name).replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+  return { sourceId: 'bm-' + slug + '-src', layerId: 'bm-' + slug + '-lyr' };
+}
+
+// Add or remove the Basemaps raster tiles for one collection.
+// Unlike a COG overlay this is a served tile pyramid, so there is nothing
+// to decode or render — MapLibre streams it like any other raster source.
+function toggleBasemapsLayer(name, btn) {
+  if (_bmLayers.has(name)) {
+    const { sourceId, layerId } = _bmLayers.get(name);
+    try { if (map.getLayer(layerId))   map.removeLayer(layerId);   } catch (e) {}
+    try { if (map.getSource(sourceId)) map.removeSource(sourceId); } catch (e) {}
+    _bmLayers.delete(name);
+    if (btn) {
+      btn.classList.remove('bm-active');
+      const lbl = btn.querySelector('.bm-label');
+      if (lbl) lbl.textContent = ' Basemaps tiles';
+    }
+    debugLog(`Basemaps layer off: ${name}`);
+    return;
+  }
+
+  const { sourceId, layerId } = _bmIds(name);
+  try {
+    map.addSource(sourceId, {
+      type: 'raster',
+      tiles: [basemapsXyzUrl(name)],
+      tileSize: 256,
+      attribution: 'LINZ Basemaps',
+    });
+    // Insert beneath the click footprint so the outline stays readable.
+    const before = map.getLayer(FP_FILL) ? FP_FILL : undefined;
+    map.addLayer({
+      id: layerId, type: 'raster', source: sourceId,
+      paint: { 'raster-opacity': 1 },
+    }, before);
+    _bmLayers.set(name, { sourceId, layerId });
+    if (btn) {
+      btn.classList.add('bm-active');
+      const lbl = btn.querySelector('.bm-label');
+      if (lbl) lbl.textContent = ' Hide tiles';
+    }
+    debugLog(`Basemaps layer on: ${name}`);
+  } catch (err) {
+    debugLog(`ERR basemaps layer ${name}: ${String(err.message).slice(0, 60)}`);
+    try { if (map.getSource(sourceId)) map.removeSource(sourceId); } catch (e) {}
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // One listener on the results container handles all card interactions.
 // Set up once at page load — not inside appendCard — so it is never
 // lost when resultsEl.innerHTML is cleared between queries.
 // ═══════════════════════════════════════════════════════════════════
 resultsEl.addEventListener('click', e => {
+  // ── LINZ Basemaps tile layer toggle ──────────────────────────────
+  const bmBtn = e.target.closest('[data-bm-layer]');
+  if (bmBtn) {
+    e.stopPropagation();
+    toggleBasemapsLayer(bmBtn.dataset.bmLayer, bmBtn);
+    return;
+  }
+
   // ── COG "Open on Map" button ─────────────────────────────────────
   const cogBtn = e.target.closest('[data-cog-url]');
   if (cogBtn) {
