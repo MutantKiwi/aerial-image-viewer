@@ -4014,6 +4014,55 @@ function _shareCogLink(cogEntry) {
 const PROJECT_VERSION = 1;
 const PROJECT_MAX_FITS = 25;   // keeps a long warp history from bloating a link
 
+// Where a project is parked when it is shortened. Writes go to the Lambda;
+// reads come straight from the bucket CloudFront already serves, which makes
+// them same-origin, cacheable forever and free.
+const PROJECT_API   = 'https://ev3ju4ekiyn4bkk2hcrkscpeha0npsof.lambda-url.ap-southeast-2.on.aws/';
+const PROJECT_STORE = '/p/';
+
+// deflate-raw, then base64url. Everything in a project repeats -- one survey
+// slug per sheet, tile ids sharing a prefix -- so this is where nearly all of
+// the length goes. Browsers without CompressionStream fall back to the
+// uncompressed form rather than losing the feature.
+async function _deflate(str) {
+  if (typeof CompressionStream !== 'function') return null;
+  try {
+    const cs = new CompressionStream('deflate-raw');
+    const w  = cs.writable.getWriter();
+    w.write(new TextEncoder().encode(str));
+    w.close();
+    const buf = new Uint8Array(await new Response(cs.readable).arrayBuffer());
+    let bin = '';
+    for (const b of buf) bin += String.fromCharCode(b);
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  } catch (_) { return null; }
+}
+
+async function _inflate(s) {
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+  const u8  = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  const ds = new DecompressionStream('deflate-raw');
+  const w  = ds.writable.getWriter();
+  w.write(u8);
+  w.close();
+  return new Response(ds.readable).text();
+}
+
+// A leading '.' marks a compressed payload. It is legal in a fragment and
+// never occurs in base64url, so links made before compression still parse.
+async function _packProject(payload) {
+  const json = JSON.stringify(payload);
+  const z = await _deflate(json);
+  return z ? '.' + z : _b64urlEncode(json);
+}
+
+async function _unpackProject(s) {
+  return s.charAt(0) === '.'
+    ? JSON.parse(await _inflate(s.slice(1)))
+    : JSON.parse(_b64urlDecode(s));
+}
+
 // btoa throws on anything above U+00FF, and sheet titles carry macrons
 // (Ōtaki, Te Whanganui-a-Hei), so encode to UTF-8 bytes first.
 function _b64urlEncode(str) {
@@ -4073,27 +4122,55 @@ function _collectProject() {
   return [PROJECT_VERSION, bmSel ? bmSel.value : '', dataset, sheets, fits, photo];
 }
 
-function _shareProject() {
-  const payload = _collectProject();
-  const sheets = payload[3], fits = payload[4], photo = payload[5];
-  const url = _buildShareUrl('p=' + _b64urlEncode(JSON.stringify(payload)));
+async function _shareProject() {
+  const btn = document.getElementById('panel-project-btn');
+  const was = btn ? btn.innerHTML : null;
+  if (btn) { btn.style.pointerEvents = 'none'; btn.textContent = 'Saving…'; }
 
-  const bits = [];
-  bits.push(sheets.length === 1 ? '1 sheet' : sheets.length + ' sheets');
-  if (photo) bits.push('photo');
-  else if (fits.length) bits.push(fits.length === 1 ? '1 fit' : fits.length + ' fits');
-  let label = 'Project link (' + bits.join(' + ') + ')';
-  if (url.length > 2000) label += ' — long link';
+  try {
+    const payload = _collectProject();
+    const sheets = payload[3], fits = payload[4], photo = payload[5];
+    const packed = await _packProject(payload);
 
-  _shareUrl(url, label);
-  debugInfo('Project link: ' + url.length + ' chars, ' + sheets.length +
-            ' sheet(s), ' + fits.length + ' fit(s)');
+    const bits = [sheets.length === 1 ? '1 sheet' : sheets.length + ' sheets'];
+    if (photo) bits.push('photo');
+    else if (fits.length) bits.push(fits.length === 1 ? '1 fit' : fits.length + ' fits');
+
+    // Preferred: park the payload and share a short id. If the shortener is
+    // unreachable -- offline, blocked, or simply down -- the self-contained
+    // link below still carries the whole project, so saving still works.
+    let url = _buildShareUrl('p=' + packed);
+    let kind = 'full link';
+    try {
+      const r = await fetch(PROJECT_API, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ v: PROJECT_VERSION, d: packed }),
+      });
+      if (r.ok) {
+        const j = await r.json();
+        if (j && j.id) { url = _buildShareUrl('s=' + encodeURIComponent(j.id)); kind = 'short'; }
+      } else {
+        debugInfo('Shortener returned HTTP ' + r.status + '; sharing the full link');
+      }
+    } catch (err) {
+      debugInfo('Shortener unreachable (' + String(err.message).slice(0, 40) +
+                '); sharing the full link');
+    }
+
+    if (kind === 'full link' && url.length > 2000) bits.push('long link');
+    _shareUrl(url, 'Project link (' + bits.join(' + ') + ')');
+    debugInfo('Project ' + kind + ': ' + url.length + ' chars, ' + sheets.length +
+              ' sheet(s), ' + fits.length + ' fit(s)');
+  } finally {
+    if (btn) { btn.innerHTML = was; btn.style.pointerEvents = ''; }
+  }
 }
 
 // Rebuild a project from its link.
 async function _restoreProject(encoded, lng, lat, zoom) {
   let payload;
-  try { payload = JSON.parse(_b64urlDecode(encoded)); } catch (e) {
+  try { payload = await _unpackProject(encoded); } catch (e) {
     debugErr('Project link could not be read'); return;
   }
   if (!Array.isArray(payload) || payload[0] !== PROJECT_VERSION) {
@@ -4294,9 +4371,26 @@ document.getElementById('dataset-select').onchange = (e) => {
       });
     }
 
-    // Project link: basemap + every sheet + any fitted photo
-    if (params.p) {
-      map.once('moveend', () => { _restoreProject(params.p, lng, lat, zoom); });
+    // Project link. 's' is a project parked in the bucket; 'p' carries the
+    // whole thing in the link itself. Both end up in the same restore.
+    if (params.s || params.p) {
+      map.once('moveend', async () => {
+        let packed = params.p || '';
+        if (params.s) {
+          try {
+            const r = await fetch(PROJECT_STORE +
+                                  encodeURIComponent(params.s) + '.json');
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const j = await r.json();
+            packed = (j && j.d) || '';
+            if (!packed) throw new Error('empty project');
+          } catch (err) {
+            debugErr('Could not load project ' + params.s + ': ' + err.message);
+            return;
+          }
+        }
+        if (packed) _restoreProject(packed, lng, lat, zoom);
+      });
     }
 
     // COG link: load a specific image by titleUnicode/assetId
