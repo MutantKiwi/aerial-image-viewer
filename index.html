@@ -498,6 +498,12 @@ window._zstdReady = new Promise((resolve, reject) => {
   }
   #basemap-select:focus { outline: none; border-color: var(--accent2); }
   #basemap-select option { background: #0f1114; color: var(--text); }
+  /* Two groups now: current basemaps and the historic mapspast series. */
+  #basemap-select optgroup {
+    background: #0f1114; color: var(--accent2);
+    font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  #basemap-select optgroup option { color: var(--text); text-transform: none; letter-spacing: 0; }
 
   /* Custom compass */
   #compass {
@@ -803,9 +809,18 @@ window._zstdReady = new Promise((resolve, reject) => {
 
 <div id="basemap-select-wrap">
   <select id="basemap-select">
-    <option value="topo">NZ Topo Gridless</option>
-    <option value="topolite" selected>NZ Topo Lite</option>
-    <option value="aerial">NZ Aerial Imagery</option>
+    <optgroup label="Current">
+      <option value="topo">NZ Topo Gridless</option>
+      <option value="topolite" selected>NZ Topo Lite</option>
+      <option value="aerial">NZ Aerial Imagery</option>
+    </optgroup>
+    <optgroup label="Historic — mapspast.org.nz">
+      <option value="nzms260-1999">NZMS 260 (1999)</option>
+      <option value="nzms260-1989">NZMS 260 / NZMS 1 (1989)</option>
+      <option value="nzms1-1979">NZMS 1 (1979)</option>
+      <option value="nzms1-1969">NZMS 1 (1969)</option>
+      <option value="nzms1-1959">NZMS 1 (1959)</option>
+    </optgroup>
   </select>
 </div>
 
@@ -1135,6 +1150,42 @@ const COG_LOG = (() => {
 
   return { record, flush };
 })();
+// ── mapspast.org.nz historic topographic series ───────────────────────────────
+// Scanned NZMS editions served as Web Mercator tiles from Catalyst Cloud object
+// storage.
+//
+// This is the HTTPS object-storage endpoint rather than the au.mapspast.org.nz
+// alias, which answers on http only: this page is https, so those tiles would
+// be blocked as mixed content and silently never appear. The same bucket also
+// holds an EPSG:2193 pyramid, which MapLibre cannot use — it reads Web Mercator
+// tiling only, the same limitation that keeps the LINZ NZTM2000Quad WMTS out of
+// this viewer.
+//
+// Every layer covers z1–z15. Declaring maxzoom 15 lets MapLibre stretch the
+// deepest tiles when you zoom past it, instead of leaving the map blank.
+const MAPSPAST_BASE =
+  'https://object-storage.nz-por-1.catalystcloud.io/v1/AUTH_b1d1ad52024f4f1b909bfea0e41fbff8/mapspast/3857';
+
+const mapsPast = (label, layer) => ({
+  label,
+  type: 'raster-inline',
+  style: {
+    version: 8,
+    sources: {
+      mapspast: {
+        type: 'raster',
+        tiles: [`${MAPSPAST_BASE}/${layer}/{z}/{x}/{y}.png`],
+        tileSize: 256,
+        minzoom: 1,
+        maxzoom: 15,
+        attribution:
+          'Historic maps <a href="https://mapspast.org.nz" target="_blank" rel="noopener">mapspast.org.nz</a>',
+      },
+    },
+    layers: [{ id: 'mapspast', type: 'raster', source: 'mapspast' }],
+  },
+});
+
 const BASEMAPS = {
   topo: {
     label: 'NZ Topo Gridless',
@@ -1163,6 +1214,12 @@ const BASEMAPS = {
     },
     type: 'raster-inline',
   },
+
+  'nzms260-1999': mapsPast('NZMS 260 (1999)',           'nzms260-1999'),
+  'nzms260-1989': mapsPast('NZMS 260 / NZMS 1 (1989)',  'nzms260-1989'),
+  'nzms1-1979':   mapsPast('NZMS 1 (1979)',             'nzms1-1979'),
+  'nzms1-1969':   mapsPast('NZMS 1 (1969)',             'nzms1-1969'),
+  'nzms1-1959':   mapsPast('NZMS 1 (1959)',             'nzms1-1959'),
 };
 
 // ── Terrain (3D) ──────────────────────────────────────────────────────────────
