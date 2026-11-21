@@ -4418,6 +4418,19 @@ document.getElementById('dataset-select').onchange = (e) => {
   });
 })();
 
+// A link pasted into the address bar, or clicked, while the viewer is already
+// open in that tab arrives as a same-document hash change: the browser does
+// not reload, so none of the restore above runs and the project silently never
+// appears. That trap is easy to hit when you send someone a link and they
+// already have the site open.
+//
+// This page never writes its own hash, so any change here came from the
+// person. Reloading is blunt, but it reuses the restore path above rather than
+// duplicating it, and it only fires for a hash that actually carries state.
+window.addEventListener('hashchange', () => {
+  if (/&(s|p|cog|q)=/.test(window.location.hash)) window.location.reload();
+});
+
 // ── COG neighbour compass ─────────────────────────────────────────────────────
 // Activated via right-click context menu "Add more sheets".
 // Probes all 8 directions for same-series neighbours; greys out missing ones.
