@@ -3145,7 +3145,21 @@ function _collectProject() {
     }
   }
 
-  return [PROJECT_VERSION, bmSel ? bmSel.value : '', dataset, sheets, fits, photo];
+  // WMTS layers live in the same map but carry neither titleUnicode nor
+  // assetId, so they are gathered separately from the COG sheets above.
+  const wmts = [..._cogMap.values()]
+    .filter(e => e.kind === 'wmts' && e.basemapsName)
+    .map(e => [
+      e.basemapsName,
+      e.label || '',
+      +(e.opacity !== undefined ? e.opacity : 1).toFixed(2),
+      e.visible === false ? 0 : 1,
+    ]);
+
+  // Appended, not versioned: a reader that predates this still destructures
+  // the first six and simply sees no WMTS.
+  return [PROJECT_VERSION, bmSel ? bmSel.value : '', dataset, sheets, fits,
+          photo, wmts];
 }
 
 async function _shareProject() {
@@ -3158,7 +3172,17 @@ async function _shareProject() {
     const sheets = payload[3], fits = payload[4], photo = payload[5];
     const packed = await _packProject(payload);
 
-    const bits = [sheets.length === 1 ? '1 sheet' : sheets.length + ' sheets'];
+    const wmts = payload[6] || [];
+    const bits = [];
+    if (sheets.length) bits.push(sheets.length === 1 ? '1 sheet'
+                                                     : sheets.length + ' sheets');
+    if (wmts.length) bits.push(wmts.length === 1 ? '1 WMTS'
+                                                 : wmts.length + ' WMTS');
+    // Saying "0 sheets" reads like success. If the map is empty the link is
+    // still worth having - it carries the place and the basemap - but it
+    // should say so, rather than letting someone believe their imagery went
+    // with it.
+    if (!bits.length) bits.push('view only \u2014 nothing on the map');
     if (photo) bits.push('photo');
     else if (fits.length) bits.push(fits.length === 1 ? '1 fit' : fits.length + ' fits');
 
@@ -3203,6 +3227,7 @@ async function _restoreProject(encoded, lng, lat, zoom) {
     debugErr('Project link is from a different version of this page'); return;
   }
   const [, bmKey, dataset, sheets, fits, photo] = payload;
+  const wmts = payload[6] || [];   // absent in projects saved before WMTS
 
   // Basemap first: setBasemap swaps the whole style, which tears down and
   // re-adds every COG layer. Doing it before the sheets load avoids that churn.
@@ -3231,6 +3256,30 @@ async function _restoreProject(encoded, lng, lat, zoom) {
       dsSel.value = dataset;
       dsSel.dispatchEvent(new Event('change'));
     }
+  }
+
+  // WMTS layers. toggleBasemapsLayer both adds and removes, so an already
+  // active layer is left alone rather than being switched off.
+  if (Array.isArray(wmts) && wmts.length &&
+      typeof toggleBasemapsLayer === 'function') {
+    for (const w of wmts) {
+      if (!Array.isArray(w) || !w[0]) continue;
+      if (typeof bmIsActive === 'function' && bmIsActive(w[0])) continue;
+      try {
+        toggleBasemapsLayer(w[0], w[1] || w[0]);
+        const entry = _cogMap.get(_bmKey(w[0]));
+        if (!entry) continue;
+        entry.opacity = w[2] !== undefined ? w[2] : 1;
+        entry.visible = w[3] !== 0;
+        map.setPaintProperty(entry.layerId, 'raster-opacity', entry.opacity);
+        map.setLayoutProperty(entry.layerId, 'visibility',
+                              entry.visible ? 'visible' : 'none');
+      } catch (err) {
+        debugErr('Could not restore WMTS ' + w[0] + ': ' + err.message);
+      }
+    }
+    try { _syncBmButtons(); } catch (_) {}
+    _updateCogBar();
   }
 
   // One pass over the catalogue for every sheet. A cog= link does its own
