@@ -61,6 +61,7 @@ window._zstdReady = new Promise((resolve, reject) => {
     --border:   rgba(255,255,255,0.07);
     --accent:   #e8ff47;
     --accent2:  #47c8ff;
+    --accent3:  #3cb371;
     --text:     #e2e8f0;
     --muted:    #6b7280;
     --danger:   #ff6b47;
@@ -148,6 +149,41 @@ window._zstdReady = new Promise((resolve, reject) => {
   #progress-wrap { flex-shrink: 0; height: 3px; background: var(--surface2); }
   #progress-bar { height: 100%; width: 0; background: var(--accent); transition: width 0.2s; }
 
+
+  /* ── Save buttons ──────────────────────────────────────────────────────────
+     Filled rather than outlined. These are the two things a visitor is most
+     likely to want once they have a map they like, and as muted transparent
+     outlines they read as disabled text. They sit on their own strip because
+     the header already carries title, coords, count, help and close, and the
+     panel goes down to 280px. */
+  #panel-actions {
+    display: flex; gap: 8px; padding: 8px 14px 10px; flex-shrink: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .save-btn {
+    flex: 1; min-width: 0; display: flex; align-items: center;
+    justify-content: center; gap: 6px; height: 32px;
+    border-radius: 5px; cursor: pointer; white-space: nowrap;
+    font-size: 11px; font-family: 'Consolas', monospace; font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    transition: background 0.15s, box-shadow 0.15s, transform 0.08s;
+  }
+  .save-btn svg { flex-shrink: 0; }
+  .save-btn:active { transform: translateY(1px); }
+  .save-btn-search {
+    color: #06212e; background: var(--accent2); border: 1px solid var(--accent2);
+    box-shadow: 0 1px 8px rgba(71,200,255,0.25);
+  }
+  .save-btn-search:hover {
+    background: #7ddaff; box-shadow: 0 2px 12px rgba(71,200,255,0.45);
+  }
+  .save-btn-project {
+    color: #05210f; background: var(--accent3); border: 1px solid var(--accent3);
+    box-shadow: 0 1px 8px rgba(60,179,113,0.25);
+  }
+  .save-btn-project:hover {
+    background: #5fcf90; box-shadow: 0 2px 12px rgba(60,179,113,0.45);
+  }
   #results { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; display: block; }
   #results .result-card { margin-bottom: 8px; }
 
@@ -898,16 +934,6 @@ window._zstdReady = new Promise((resolve, reject) => {
       <div id="panel-coords">—</div>
     </div>
     <div id="panel-count"><span class="n" id="count-n">0</span> found</div>
-    <button id="panel-share-btn" title="Share search — copy link to this location"
-       style="display:flex;align-items:center;gap:5px;padding:0 8px;height:28px;
-              border-radius:4px;border:1px solid var(--border);cursor:pointer;
-              color:var(--muted);font-size:10px;font-family:'Consolas',monospace;
-              letter-spacing:0.05em;background:transparent;transition:all 0.15s;flex-shrink:0;"
-       onmouseover="this.style.color='var(--accent2)';this.style.borderColor='rgba(71,200,255,0.4)'"
-       onmouseout="this.style.color='var(--muted)';this.style.borderColor='var(--border)'">
-      <svg width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13"/></svg>
-      Share search
-    </button>
     <button id="panel-help-btn" title="Help"
        onclick="_toggleHelpPanel()"
        style="display:flex;align-items:center;justify-content:center;
@@ -918,6 +944,18 @@ window._zstdReady = new Promise((resolve, reject) => {
        onmouseout="this.style.color='#fff';this.style.borderColor='var(--border)'">?</button>
     <button id="close-btn" title="Close panel">
       <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+  <div id="panel-actions">
+    <button id="panel-share-btn" class="save-btn save-btn-search"
+            title="Save search — copy a link to this location and its result list">
+      <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4.5-4.5"/></svg>
+      Save Search
+    </button>
+    <button id="panel-project-btn" class="save-btn save-btn-project"
+            title="Save project — copy a link to the sheets on the map, their opacity, the basemap, and any fitted photos">
+      <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="M4 7h6l2 2h8v10a1 1 0 01-1 1H5a1 1 0 01-1-1V7z"/><path d="M4 7V5a1 1 0 011-1h4l2 2"/></svg>
+      Save Project
     </button>
   </div>
   <div id="progress-wrap"><div id="progress-bar"></div></div>
@@ -2830,6 +2868,10 @@ function _syncToggleAllBtn() {
 // @param {string} label        - Human-readable layer name (from CONFIG)
 // @param {string} assetId      - From FGB feature property 'assest_id'
 // @param {string} titleUnicode - From FGB feature property 'title_unicode'
+// Set while a project restore places several sheets, so each load
+// skips its own fitBounds and the saved view survives.
+let _suppressFit = false;
+
 async function loadCogOnMap(url, label, assetId, titleUnicode, seriesKey, year) {
   // If already loaded, just re-render (no duplicate)
   if (_cogMap.has(url)) {
@@ -2870,12 +2912,16 @@ async function loadCogOnMap(url, label, assetId, titleUnicode, seriesKey, year) 
     loading.style.display = 'none';
     _updateCogBar();
 
-    // Zoom to this COG's extents
-    map.fitBounds(
-      [[Math.min(swLng, nwLng), Math.min(swLat, seLat)],
-       [Math.max(neLng, seLng), Math.max(nwLat, neLat)]],
-      { padding: 60, duration: 800 }
-    );
+    // Zoom to this COG, unless a project restore is placing
+    // several sheets and will set the view itself at the end.
+    if (!_suppressFit) {
+      // Zoom to this COG's extents
+      map.fitBounds(
+        [[Math.min(swLng, nwLng), Math.min(swLat, seLat)],
+         [Math.max(neLng, seLng), Math.max(nwLat, neLat)]],
+        { padding: 60, duration: 800 }
+      );
+    }
 
     renderOneCog(entry);
 
@@ -3505,6 +3551,229 @@ function _shareCogLink(cogEntry) {
   _shareUrl(url, 'Image link');
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SAVE PROJECT — the whole map state in one link
+// ═══════════════════════════════════════════════════════════════════
+//
+// "Save search" shares a place to look. "Save project" shares what you have
+// built there: every sheet on the map at its own opacity, the basemap you
+// chose, and — on the beta page — the open Retrolens photo with the corner
+// warp you nudged it into.
+//
+//   hash: #lng,lat,Xz&p=<base64url of a positional JSON array>
+//
+// Positional arrays, not objects: a twenty-sheet project would otherwise spend
+// most of the URL repeating the same JSON keys.
+//
+//   [1, basemapKey, dataset, sheets, fits, photoAssetId]
+//     sheets: [[titleUnicode, assetId, opacity, visible], ...]
+//     fits:   [[assetId, opacity, lng1,lat1, lng2,lat2, lng3,lat3, lng4,lat4], ...]
+//
+// There is no server here, so a project lives entirely in its own URL. That
+// keeps it free and permanent, at the cost of length: a big project makes a
+// long link, and some chat apps clip past a couple of thousand characters.
+// _shareProject warns when a link crosses that line.
+
+const PROJECT_VERSION = 1;
+const PROJECT_MAX_FITS = 25;   // keeps a long warp history from bloating a link
+
+// btoa throws on anything above U+00FF, and sheet titles carry macrons
+// (Ōtaki, Te Whanganui-a-Hei), so encode to UTF-8 bytes first.
+function _b64urlEncode(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function _b64urlDecode(s) {
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
+// Gather the current state. The Retrolens pieces are feature-detected rather
+// than branched on a page name, so one block of code serves both pages: a
+// project saved on beta still opens on the main page, minus the photos.
+function _collectProject() {
+  const bmSel = document.getElementById('basemap-select');
+
+  const sheets = [..._cogMap.values()]
+    .filter(e => e.titleUnicode || e.assetId)
+    .map(e => [
+      e.titleUnicode || '',
+      e.assetId || '',
+      +(e.opacity !== undefined ? e.opacity : 0.9).toFixed(2),
+      e.visible === false ? 0 : 1,
+    ]);
+
+  let dataset = '', fits = [], photo = '';
+
+  if (typeof currentDataset !== 'undefined') dataset = currentDataset || '';
+
+  if (typeof loadFits === 'function') {
+    // Manual four-corner warps live in localStorage, which does not travel in
+    // a link, so they are written into it. The open photo's fit goes first and
+    // is never dropped by the cap — it is the one the recipient will see.
+    let all = {};
+    try { all = loadFits() || {}; } catch (_) { all = {}; }
+    const ids = [];
+    if (typeof _overlay !== 'undefined' && _overlay && _overlay.assetId) {
+      photo = _overlay.assetId;
+      ids.push(photo);
+    }
+    for (const k of Object.keys(all)) if (k !== photo) ids.push(k);
+    for (const id of ids.slice(0, PROJECT_MAX_FITS)) {
+      const f = all[id];
+      if (!f || !Array.isArray(f.corners) || f.corners.length !== 4) continue;
+      const flat = [];
+      for (const c of f.corners) flat.push(+(+c[0]).toFixed(6), +(+c[1]).toFixed(6));
+      fits.push([id, +(f.opacity !== undefined ? f.opacity : 0.65).toFixed(2), ...flat]);
+    }
+  }
+
+  return [PROJECT_VERSION, bmSel ? bmSel.value : '', dataset, sheets, fits, photo];
+}
+
+function _shareProject() {
+  const payload = _collectProject();
+  const sheets = payload[3], fits = payload[4], photo = payload[5];
+  const url = _buildShareUrl('p=' + _b64urlEncode(JSON.stringify(payload)));
+
+  const bits = [];
+  bits.push(sheets.length === 1 ? '1 sheet' : sheets.length + ' sheets');
+  if (photo) bits.push('photo');
+  else if (fits.length) bits.push(fits.length === 1 ? '1 fit' : fits.length + ' fits');
+  let label = 'Project link (' + bits.join(' + ') + ')';
+  if (url.length > 2000) label += ' — long link';
+
+  _shareUrl(url, label);
+  debugInfo('Project link: ' + url.length + ' chars, ' + sheets.length +
+            ' sheet(s), ' + fits.length + ' fit(s)');
+}
+
+// Rebuild a project from its link.
+async function _restoreProject(encoded, lng, lat, zoom) {
+  let payload;
+  try { payload = JSON.parse(_b64urlDecode(encoded)); } catch (e) {
+    debugErr('Project link could not be read'); return;
+  }
+  if (!Array.isArray(payload) || payload[0] !== PROJECT_VERSION) {
+    debugErr('Project link is from a different version of this page'); return;
+  }
+  const [, bmKey, dataset, sheets, fits, photo] = payload;
+
+  // Basemap first: setBasemap swaps the whole style, which tears down and
+  // re-adds every COG layer. Doing it before the sheets load avoids that churn.
+  if (bmKey && typeof BASEMAPS === 'object' && BASEMAPS[bmKey]) {
+    const sel = document.getElementById('basemap-select');
+    if (sel && sel.value !== bmKey) {
+      sel.value = bmKey;
+      await setBasemap(bmKey);
+    }
+  }
+
+  // Merge the link's fits into this browser's store rather than replacing it,
+  // so opening a friend's project does not discard your own warps. The link
+  // wins where both have the same photo: that is the version its sender saw.
+  if (Array.isArray(fits) && typeof saveFit === 'function') {
+    for (const f of fits) {
+      if (!Array.isArray(f) || f.length < 10) continue;
+      const corners = [[f[2], f[3]], [f[4], f[5]], [f[6], f[7]], [f[8], f[9]]];
+      try { saveFit(f[0], corners, f[1]); } catch (_) {}
+    }
+  }
+
+  if (dataset && typeof currentDataset !== 'undefined') {
+    const dsSel = document.getElementById('dataset-select');
+    if (dsSel && dsSel.value !== dataset) {
+      dsSel.value = dataset;
+      dsSel.dispatchEvent(new Event('change'));
+    }
+  }
+
+  // One pass over the catalogue for every sheet. A cog= link does its own
+  // ±50 km search; twenty sheets that way would be twenty traversals of the
+  // index, so collect the wanted keys and satisfy them all from one read.
+  if (Array.isArray(sheets) && sheets.length) {
+    const want = new Map();
+    for (const s of sheets) want.set((s[0] || '') + '\u0000' + (s[1] || ''), s);
+
+    const [e0, n0] = toNZTM(lng, lat);
+    const d = 60000;
+    const rect = { minX: e0 - d, minY: n0 - d, maxX: e0 + d, maxY: n0 + d };
+    const hits = [];
+    try {
+      for await (const feat of flatgeobuf.deserialize(MASTER_FGB, rect)) {
+        if (!want.size) break;
+        const p = feat.properties || {};
+        if (!p.asset_url_image) continue;
+        const key = (p.title_unicode || '') + '\u0000' +
+                    (p.asset_id || p.assest_id || '');
+        const s = want.get(key);
+        if (!s) continue;
+        want.delete(key);
+        hits.push({ p, s });
+      }
+    } catch (err) { debugErr('Project sheet lookup failed: ' + err.message); }
+
+    if (want.size) {
+      debugInfo(want.size + ' sheet(s) in this project are no longer in the ' +
+                'catalogue, or lie outside the saved view');
+    }
+
+    // Suppress the per-sheet fitBounds: each load would otherwise fly the map
+    // to its own sheet, and whichever finished last would decide where the
+    // recipient lands instead of the saved view.
+    _suppressFit = true;
+    try {
+      for (const { p, s } of hits) {
+        // The beta page takes seriesKey and year as well, for the neighbour
+        // compass. Both derive from the catalogue record, so they are computed
+        // here rather than carried in the link.
+        const extra = (typeof _seriesKeyOf === 'function')
+          ? [_seriesKeyOf(p), p.year || ''] : [];
+        await loadCogOnMap(p.asset_url_image, p.title || s[0],
+                           p.asset_id || '', p.title_unicode || '', ...extra);
+        const entry = _cogMap.get(p.asset_url_image);
+        if (!entry) continue;
+        entry.opacity = s[2];
+        entry.visible = s[3] !== 0;
+        try {
+          map.setPaintProperty(entry.layerId, 'raster-opacity', entry.opacity);
+          map.setLayoutProperty(entry.layerId, 'visibility',
+                                entry.visible ? 'visible' : 'none');
+        } catch (_) {}
+      }
+    } finally { _suppressFit = false; }
+    _updateCogBar();
+  }
+
+  // Retrolens photo overlay — beta page only. The fit was merged into
+  // localStorage above, so placePhotoOnMap picks the saved warp up itself.
+  if (photo && typeof placePhotoOnMap === 'function' &&
+      typeof DATASETS === 'object' && DATASETS.retrolens) {
+    const [e0, n0] = toNZTM(lng, lat);
+    const d = 60000;
+    const rect = { minX: e0 - d, minY: n0 - d, maxX: e0 + d, maxY: n0 + d };
+    try {
+      for await (const feat of flatgeobuf.deserialize(DATASETS.retrolens, rect)) {
+        const p = feat.properties || {};
+        if ((p.asset_id || p.assest_id || '') !== photo) continue;
+        placePhotoOnMap(p, feat);
+        break;
+      }
+    } catch (err) { debugErr('Project photo lookup failed: ' + err.message); }
+  }
+
+  // Land on the saved view, not on wherever the last sheet happened to be.
+  map.flyTo({ center: [lng, lat], zoom, duration: 600 });
+  map.once('moveend', () => { try { renderAllCogs(); } catch (_) {} });
+}
+
+document.getElementById('panel-project-btn').onclick = () => _shareProject();
+
 // Wire panel share button
 document.getElementById('panel-share-btn').onclick = () => _shareSearch();
 
@@ -3586,6 +3855,11 @@ document.getElementById('dataset-select').onchange = (e) => {
           setTimeout(() => { progressEl.style.width = '0'; }, 600);
         });
       });
+    }
+
+    // Project link: basemap + every sheet + any fitted photo
+    if (params.p) {
+      map.once('moveend', () => { _restoreProject(params.p, lng, lat, zoom); });
     }
 
     // COG link: load a specific image by titleUnicode/assetId
