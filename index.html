@@ -61,7 +61,7 @@ window._zstdReady = new Promise((resolve, reject) => {
     --border:   rgba(255,255,255,0.07);
     --accent:   #e8ff47;
     --accent2:  #47c8ff;
-    --accent3:  #3cb371;
+    --accent3:  #3cb371;  /* medium green — WMTS actions and Save Project */
     --text:     #e2e8f0;
     --muted:    #6b7280;
     --danger:   #ff6b47;
@@ -281,6 +281,16 @@ window._zstdReady = new Promise((resolve, reject) => {
   .btn-primary:hover { filter: brightness(1.1); }
   .btn-secondary { background: transparent; color: var(--accent2); border: 1px solid var(--accent2); }
   .btn-secondary:hover { background: rgba(71,200,255,0.1); }
+  /* WMTS actions are green, to separate "stream the served survey mosaic"
+     from the cyan per-sheet COG actions beside them. */
+  .btn-wmts { background: transparent; color: var(--accent3); border: 1px solid var(--accent3); }
+  .btn-wmts:hover { background: rgba(60,179,113,0.12); }
+  /* A WMTS layer currently on the map — filled, so the card shows at a
+     glance which surveys are drawn without looking at the map. */
+  .btn-wmts.bm-active {
+    background: var(--accent3); color: #04140b; border-color: var(--accent3);
+  }
+  .btn-wmts.bm-active:hover { background: #5fcb92; border-color: #5fcb92; }
   .btn-ghost { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
   .btn-ghost:hover { color: var(--text); border-color: rgba(255,255,255,0.15); }
 
@@ -371,6 +381,8 @@ window._zstdReady = new Promise((resolve, reject) => {
     min-width: 0;
   }
   .cog-bar-row-asset { color: var(--accent); font-size: 10px; flex-shrink: 0; }
+  /* WMTS rows name the service here instead of a tile, in the WMTS green. */
+  .cog-bar-row-asset.is-wmts { color: var(--accent3); font-weight: 700; }
   .cog-bar-row-status { flex-shrink: 0; width: 14px; display: flex; align-items: center; justify-content: center; }
   .cog-bar-row-status .row-spinner {
     width: 10px; height: 10px; border: 1.5px solid rgba(71,200,255,0.2);
@@ -1115,6 +1127,297 @@ const CONFIG = {
 };
 
 // ═══════════════════════════════════════════════════════════════════
+// LINZ BASEMAPS LAYER LOOKUP
+// ═══════════════════════════════════════════════════════════════════
+// Most nz-imagery STAC collections are also published as a LINZ Basemaps
+// tile layer. basemaps_layers.json maps the collection.json path to the
+// Basemaps layer name.
+//
+// The HOST is stripped from the key because the Basemaps catalogue spells
+// it 's3.ap-southeast-2' where the harvester spells it
+// 's3-ap-southeast-2' — a full-URL join silently matches nothing.
+//
+// The full PATH is used rather than region + folder because the rgb and
+// rgbnir collections of one survey share a folder, and LINZ publishes no
+// near-infrared tile layers. Keying on the folder hands a near-infrared
+// collection the RGB mosaic, which renders true colour where the card
+// promises false colour.
+//
+// Indexes harvested from Nov 2026 carry basemaps_name on the feature
+// itself; this file is the fallback that makes the lookup work against
+// the index that is live today.
+//
+// Only the layer NAME is stored anywhere. Both endpoint URLs derive from
+// it, and it keeps an api key out of the published index.
+//
+// MapLibre cannot consume an NZTM tile matrix set, so the viewer uses the
+// WebMercatorQuad XYZ endpoint. The NZTM2000Quad WMTS — which matches the
+// FGB's own EPSG:2193 — is offered as a copyable URL for QGIS and ArcGIS.
+// Versioned: the key format changed once already (region+folder → full
+// collection path), and a browser holding the previous file against the
+// current lookup matches nothing and silently drops every button. Bump v
+// whenever the key format changes, so a cached copy can never outlive the
+// code that understands it.
+const BASEMAPS_INDEX_URL = 'https://imagery.mutant.kiwi/basemaps_layers.json?v=2';
+
+const basemapsXyzUrl  = name =>
+  `https://basemaps.linz.govt.nz/v1/tiles/${name}/WebMercatorQuad/{z}/{x}/{y}.webp?api=${LINZ_KEY}`;
+const basemapsWmtsUrl = name =>
+  `https://basemaps.linz.govt.nz/v1/tiles/${name}/NZTM2000Quad/WMTSCapabilities.xml?api=${LINZ_KEY}`;
+
+let _basemapsIndex   = null;  // null = not loaded yet; {} = loaded or unavailable
+let _basemapsLoading = null;
+
+// Fetch the mapping once. Failure is not an error worth surfacing: the
+// Basemaps button simply never appears and everything else still works.
+function ensureBasemapsIndex() {
+  if (_basemapsIndex)   return Promise.resolve(_basemapsIndex);
+  if (_basemapsLoading) return _basemapsLoading;
+  _basemapsLoading = fetch(BASEMAPS_INDEX_URL)
+    .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+    .then(doc => {
+      _basemapsIndex = (doc && doc.layers) || doc || {};
+      debugLog(`Basemaps index: ${Object.keys(_basemapsIndex).length} collections`);
+      return _basemapsIndex;
+    })
+    .catch(err => {
+      debugLog(`Basemaps index unavailable: ${String(err.message).slice(0, 60)}`);
+      _basemapsIndex = {};
+      return _basemapsIndex;
+    });
+  return _basemapsLoading;
+}
+
+// Strip scheme and host from a collection URL, leaving the path that keys
+// the mapping: '/canterbury/ashburton_2020_0.075m/rgb/2193/collection.json'
+function _collectionPath(url) {
+  if (!url) return '';
+  const i = url.indexOf('/', url.indexOf('//') + 2);
+  return i === -1 ? '' : url.slice(i);
+}
+
+// ── Desktop GIS layer files ──────────────────────────────────────────
+// QGIS and ArcGIS Pro both consume the NZTM2000Quad WMTS directly, which
+// matches the FGB's own EPSG:2193. These build a ready-made layer file so
+// neither needs a connection set up by hand.
+//
+// PNG, not the WebP the map uses: LINZ's own Esri guidance asks for
+// format=png, and WebP support in desktop GIS is patchy.
+const BASEMAPS_WMTS_FORMAT = 'image/png';
+
+// The key goes in the URL. LINZ's Esri guidance says to strip it and pass
+// it as a custom parameter, but that is written for the ArcGIS Online web
+// viewer; ArcGIS Pro does not apply capabilitiesParameters to its
+// GetCapabilities request, so it asked without a key and LINZ answered
+// HTTP 400, leaving a broken layer. Tiles need no extra help once the
+// capabilities loads: the ResourceURL templates inside it already carry
+// the key.
+const basemapsWmtsBase = name => basemapsWmtsUrl(name);
+
+const _xmlEsc = s => String(s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+// Element text only needs these three; leaving quotes alone keeps the WKT legible.
+const _xmlText = s => String(s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+// EPSG:2193 spelled out in full. An <srs> block carrying only <authid> is
+// not enough — QGIS then has no definition to place the layer with and
+// draws it in the wrong part of the world. Values are the EPSG register's,
+// via PROJ.
+const NZTM_WKT = 'PROJCS["NZGD2000 / New Zealand Transverse Mercator 2000",GEOGCS["NZGD2000",DATUM["New_Zealand_Geodetic_Datum_2000",SPHEROID["GRS 1980",6378137,298.257222101,AUTHORITY["EPSG","7019"]],AUTHORITY["EPSG","6167"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],AUTHORITY["EPSG","4167"]],PROJECTION["Transverse_Mercator"],PARAMETER["latitude_of_origin",0],PARAMETER["central_meridian",173],PARAMETER["scale_factor",0.9996],PARAMETER["false_easting",1600000],PARAMETER["false_northing",10000000],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AUTHORITY["EPSG","2193"]]';
+const NZTM_PROJ4 = '+proj=tmerc +lat_0=0 +lon_0=173 +k=0.9996 +x_0=1600000 +y_0=10000000 +ellps=GRS80 +units=m +no_defs';
+const NZTM_SRS_XML = `<spatialrefsys nativeFormat="Wkt">
+        <wkt>${_xmlText(NZTM_WKT)}</wkt>
+        <proj4>${_xmlText(NZTM_PROJ4)}</proj4>
+        <srid>2193</srid>
+        <authid>EPSG:2193</authid>
+        <description>NZGD2000 / New Zealand Transverse Mercator 2000</description>
+        <projectionacronym>tmerc</projectionacronym>
+        <ellipsoidacronym>EPSG:7019</ellipsoidacronym>
+        <geographicflag>false</geographicflag>
+      </spatialrefsys>`;
+
+// QGIS layer definition. The 'wms' provider serves WMTS too; the whole
+// capabilities URL is percent-encoded into the url= parameter because it
+// carries its own query string, which would otherwise be parsed as more
+// URI parameters.
+function qgisQlrFor(name, title) {
+  const uri = [
+    'contextualWMSLegend=0',
+    'crs=EPSG:2193',
+    'dpiMode=7',
+    'format=' + encodeURIComponent(BASEMAPS_WMTS_FORMAT),
+    'layers=' + encodeURIComponent(name),
+    'styles=',
+    'tileMatrixSet=NZTM2000Quad',
+    'url=' + encodeURIComponent(basemapsWmtsUrl(name)),
+  ].join('&');
+  const id = name.replace(/[^a-z0-9]+/gi, '_') + '_wmts';
+  const t  = _xmlEsc(title || name);
+  const u  = _xmlEsc(uri);
+  return `<!DOCTYPE qgis-layer-definition>
+<qlr>
+  <layer-tree-group checked="Qt::Checked" expanded="1" name="">
+    <customproperties/>
+    <layer-tree-layer checked="Qt::Checked" expanded="1" id="${id}" name="${t}" providerKey="wms" source="${u}">
+      <customproperties/>
+    </layer-tree-layer>
+  </layer-tree-group>
+  <maplayers>
+    <maplayer type="raster" hasScaleBasedVisibilityFlag="0" minScale="1e+08" maxScale="0" autoRefreshEnabled="0" refreshOnNotifyEnabled="0">
+      <id>${id}</id>
+      <datasource>${u}</datasource>
+      <layername>${t}</layername>
+      <srs>${NZTM_SRS_XML}</srs>
+      <provider>wms</provider>
+      <noData/>
+      <pipe>
+        <rasterrenderer type="singlebandcolordata" band="1" opacity="1" alphaBand="-1"/>
+      </pipe>
+      <blendMode>0</blendMode>
+    </maplayer>
+  </maplayers>
+</qlr>
+`;
+}
+
+// ArcGIS Pro layer file, per Esri's published CIM spec:
+// CIMLayerDocument > CIMTiledServiceLayer > CIMWMTSServiceConnection.
+//
+// CIMTiledServiceLayer, not CIMRasterLayer: a service layer carries its
+// source in serviceConnection (CIMServiceLayerDefinition), whereas a raster
+// layer expects a dataConnection to a workspace. Put a WMTS connection in
+// dataConnection and Pro builds the layer, names it, and then shows an
+// empty Source tab — it has nothing it recognises to connect to.
+function arcgisLyrxFor(name, title) {
+  const slug = name.replace(/[^a-z0-9]+/gi, '_');
+  const path = 'CIMPATH=Map/' + slug + '.json';
+  // The canonical Ground surface id Pro writes, so two of these layer files
+  // added to one map share a surface rather than each contributing its own.
+  const elev = 'CIMPATH=Map/883b46291e364aee971e19cba46f62d7.json';
+  return JSON.stringify({
+    type: 'CIMLayerDocument',
+    version: '3.7.0',
+    build: 1904,
+    layers: [path],
+    layerDefinitions: [{
+      type: 'CIMTiledServiceLayer',
+      name: title || name,
+      uRI: path,
+      sourceModifiedTime: { type: 'TimeInstant' },
+      useSourceMetadata: true,
+      description: 'National map tile service provided by Land Information New Zealand',
+      layerElevation: {
+        type: 'CIMLayerElevationSurface',
+        elevationSurfaceLayerURI: elev,
+      },
+      layerType: 'Operational',
+      showLegends: true,
+      visibility: true,
+      displayCacheType: 'Permanent',
+      maxDisplayCacheAge: 5,
+      showPopups: true,
+      serviceLayerID: -1,
+      refreshRate: -1,
+      refreshRateUnit: 'esriTimeUnitsSeconds',
+      blendingMode: 'Alpha',
+      allowDrapingOnIntegratedMesh: true,
+      serviceConnection: {
+        type: 'CIMWMTSServiceConnection',
+        layerName: name,
+        version: '1.0.0',
+        // CIMProjectServerConnection, not CIMInternetServerConnection: only
+        // this one carries serverType, which is how Pro learns the endpoint
+        // is WMTS. Without it Pro shows the stored metadata and never
+        // connects. Note the lowercase 'url' — the CIM spec documents the
+        // inherited property as 'URL', but Pro writes and reads 'url' here.
+        serverConnection: {
+          type: 'CIMProjectServerConnection',
+          anonymous: true,
+          hideUserProperty: true,
+          url: basemapsWmtsBase(name),
+          connectionMode: 'Consumer',
+          serverType: 'WMTS',
+          useDefaultStagingFolder: true,
+        },
+        style: 'default',
+        imageFormat: BASEMAPS_WMTS_FORMAT,
+        capabilitiesParameters: { type: 'PropertySet', propertySetItems: [] },
+      },
+    }],
+    rGBColorProfile: 'sRGB IEC61966-2.1',
+    cMYKColorProfile: 'U.S. Web Coated (SWOP) v2',
+    elevationSurfaceLayerDefinitions: [{
+      type: 'CIMElevationSurfaceLayer',
+      name: 'Ground',
+      uRI: elev,
+      sourceModifiedTime: { type: 'TimeInstant' },
+      useSourceMetadata: true,
+      description: 'Ground',
+      expanded: true,
+      layer3DProperties: {
+        type: 'CIM3DLayerProperties',
+        castShadows: true,
+        isLayerLit: true,
+        layerFaceCulling: 'None',
+        preloadTextureCutoffHigh: 0.3,
+        preloadTextureCutoffLow: 0.6,
+        textureCutoffHigh: 0.3,
+        textureCutoffLow: 0.6,
+        useCompressedTextures: true,
+        verticalExaggeration: 1,
+        exaggerationMode: 'ScaleZ',
+        lighting: 'OneSideDataNormal',
+        optimizeMarkerTransparency: true,
+      },
+      layerType: 'Operational',
+      showLegends: false,
+      visibility: true,
+      displayCacheType: 'Permanent',
+      maxDisplayCacheAge: 5,
+      showPopups: true,
+      serviceLayerID: -1,
+      refreshRate: -1,
+      refreshRateUnit: 'esriTimeUnitsSeconds',
+      blendingMode: 'Alpha',
+      allowDrapingOnIntegratedMesh: true,
+      elevationMode: 'BaseGlobeSurface',
+      verticalExaggeration: 1,
+      color: { type: 'CIMRGBColor', values: [255, 255, 255, 100] },
+      surfaceTINShadingMode: 'Smooth',
+    }],
+  }, null, 2);
+}
+
+// Hand a generated string to the browser as a file.
+function downloadTextFile(filename, text, mime) {
+  try {
+    const url = URL.createObjectURL(new Blob([text], { type: mime || 'text/plain' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    debugLog(`Downloaded ${filename}`);
+  } catch (err) {
+    debugLog(`ERR download ${filename}: ${String(err.message).slice(0, 60)}`);
+  }
+}
+
+// Resolve one feature to its Basemaps layer name, or '' when it has none.
+// Near-infrared collections legitimately have none.
+function basemapsLayerFor(props) {
+  if (!props) return '';
+  if (props.basemaps_name) return props.basemaps_name;   // newer index
+  if (!_basemapsIndex) return '';
+  const path = _collectionPath(props.collection_url);
+  return (path && _basemapsIndex[path]) || '';
+}
+
+// Warm the lookup at load so it is ready before the first click.
+ensureBasemapsIndex();
+
+// ═══════════════════════════════════════════════════════════════════
 // MAP INIT
 // ═══════════════════════════════════════════════════════════════════
 // Initialise MapLibre map centred on Northland, NZ.
@@ -1501,6 +1804,16 @@ function pointInPolygon(x, y, ring) {
 // Extracted as a named function so it can be called from both the
 // map click handler and the URL hash restore path.
 function _renderResults(features) {
+  // The Basemaps buttons need the lookup. If it has not arrived yet, render
+  // without them now and repaint once it does, rather than making every
+  // caller await a file that only decorates the cards. Guarded against
+  // recursion: after loading, _basemapsIndex is an object, never null.
+  if (_basemapsIndex === null) {
+    ensureBasemapsIndex().then(() => {
+      if (window._lastResults === features) _renderResults(features);
+    });
+  }
+
   resultsEl.innerHTML = '';
   const total = features.length;
 
@@ -1683,6 +1996,10 @@ function appendCard(feature, index, container) {
   const isNIR    = /near.?infrared/i.test(label);
   const indexBg  = isNIR ? '#e84070' : 'var(--accent)';
 
+  // LINZ Basemaps layer for this collection, '' when it has none
+  // (nautical charts and a handful of surveys are not published there).
+  const bmName = basemapsLayerFor(props);
+
   // Metadata rows shown in the expanded card body
   const SHOW_KEYS = ['region', 'year', 'asset_id', 'title_unicode'];
   const metaKeys  = SHOW_KEYS.filter(k => props[k] != null && props[k] !== '');
@@ -1731,15 +2048,40 @@ function appendCard(feature, index, container) {
           data-cog-year="${escHtml(props.year || '')}"
           data-cog-asset-id="${escHtml(props.asset_id || '')}">
           <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-          Open on Map
+          Open Tile
         </button>
         <button class="btn btn-secondary"
           onclick="copyToClipboard('${escHtml(imageUrl)}', this)">
           <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-          Copy URL
+          Copy Tile URL
         </button>
 ` : ''}
-
+        ${bmName ? `
+        <button class="btn btn-wmts${bmIsActive(bmName) ? ' bm-active' : ''}"
+          data-bm-layer="${escHtml(bmName)}"
+          data-bm-label="${escHtml(label)}"
+          title="Add the LINZ Basemaps WMTS for this survey — the whole mosaic, not just this sheet">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+          <span class="bm-label">${bmIsActive(bmName) ? ' Hide WMTS' : ' Add WMTS'}</span>
+        </button>
+        <button class="btn btn-wmts"
+          onclick="copyToClipboard('${escHtml(basemapsWmtsUrl(bmName))}', this)"
+          title="NZTM2000Quad WMTS — paste into QGIS or ArcGIS Pro">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          Copy WMTS 2193
+        </button>
+        <button class="btn btn-wmts"
+          data-gis-file="qlr" data-gis-layer="${escHtml(bmName)}" data-gis-title="${escHtml(label)}"
+          title="Download a QGIS layer file for this survey's NZTM2000Quad WMTS">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          QGIS .qlr
+        </button>
+        <button class="btn btn-wmts"
+          data-gis-file="lyrx" data-gis-layer="${escHtml(bmName)}" data-gis-title="${escHtml(label)}"
+          title="Download an ArcGIS Pro layer file for this survey's NZTM2000Quad WMTS">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          ArcGIS .lyrx
+        </button>` : ''}
       </div>
     </div>`;
 
@@ -2322,13 +2664,9 @@ function solveAffine(px, world) {
   return { A, B, C, D, E, F, maxRes };
 }
 
-const NZTM_WKT = 'PROJCS["NZGD2000 / New Zealand Transverse Mercator 2000",' +
-  'GEOGCS["NZGD2000",DATUM["New_Zealand_Geodetic_Datum_2000",' +
-  'SPHEROID["GRS 1980",6378137,298.257222101]],PRIMEM["Greenwich",0],' +
-  'UNIT["degree",0.0174532925199433]],PROJECTION["Transverse_Mercator"],' +
-  'PARAMETER["latitude_of_origin",0],PARAMETER["central_meridian",173],' +
-  'PARAMETER["scale_factor",0.9996],PARAMETER["false_easting",1600000],' +
-  'PARAMETER["false_northing",10000000],UNIT["metre",1],AUTHORITY["EPSG","2193"]]';
+// NZTM_WKT is declared once, up with the QGIS layer-file builder. That copy
+// carries the full set of EPSG AUTHORITY codes, so it serves the world-file
+// .prj below as well as the .qlr.
 
 function downloadText(name, text) {
   const blob = new Blob([text], { type: 'text/plain' });
@@ -2753,11 +3091,13 @@ function removeCogOverlay(url) {
     try { if (map.getLayer(entry.layerId))   map.removeLayer(entry.layerId);   } catch(e) {}
     try { if (map.getSource(entry.sourceId)) map.removeSource(entry.sourceId); } catch(e) {}
     _cogMap.delete(url);
+    if (entry.kind === 'wmts') debugLog(`WMTS layer off: ${entry.basemapsName}`);
   } else {
     // Remove all
     _cogMap.forEach((entry, u) => removeCogOverlay(u));
   }
   _updateCogBar();
+  _syncBmButtons();
 }
 
 // Rebuild the floating "SHEETS ON MAP" pill from the current _cogMap state.
@@ -2776,7 +3116,12 @@ function _updateCogBar() {
   }
 
   bar.classList.add('visible');
-  count.textContent = _cogMap.size + ' sheet' + (_cogMap.size !== 1 ? 's' : '');
+  const nWmts  = [..._cogMap.values()].filter(e => e.kind === 'wmts').length;
+  const nSheet = _cogMap.size - nWmts;
+  count.textContent = [
+    nSheet ? nSheet + ' sheet' + (nSheet !== 1 ? 's' : '') : '',
+    nWmts  ? nWmts  + ' WMTS' : '',
+  ].filter(Boolean).join(' · ');
 
   const entries = [..._cogMap.entries()];
   list.innerHTML = entries.map(([url, e], idx) => {
@@ -2789,17 +3134,22 @@ function _updateCogBar() {
       : '<div class="row-spinner"></div>';
     const opacity = e.opacity !== undefined ? e.opacity : 0.9;
     const opPct   = Math.round(opacity * 100);
+    // A WMTS row is a whole served mosaic, so it has no tile name to show
+    // and nothing to download: the tile-name slot names the service instead.
+    const isWmts  = e.kind === 'wmts';
     return `
     <div class="cog-bar-row" data-row-idx="${idx}">
       <span class="cog-bar-row-status">${statusHtml}</span>
       <span class="cog-bar-row-label" title="${escHtml(e.label)}">${escHtml(e.label)}</span>
-      <span class="cog-bar-row-asset">${escHtml(e.assetId || '—')}</span>
+      <span class="cog-bar-row-asset${isWmts ? ' is-wmts' : ''}">${isWmts ? 'WMTS' : escHtml(e.assetId || '—')}</span>
       <div class="cog-bar-row-opacity">
         <input class="cog-opacity-slider" type="range" min="0" max="100" step="5"
           value="${opPct}" data-layer-id="${escHtml(e.layerId)}" title="Opacity">
         <span class="cog-bar-row-opacity-label">${opPct}%</span>
       </div>
-      <a class="cog-bar-row-dl" href="#" data-dl-url="${escHtml(url)}" data-dl-name="${escHtml(_cogDownloadName(e))}" title="Download GeoTIFF">↓</a>
+      ${isWmts
+        ? '<span class="cog-bar-row-dl" style="visibility:hidden">↓</span>'
+        : `<a class="cog-bar-row-dl" href="#" data-dl-url="${escHtml(url)}" data-dl-name="${escHtml(_cogDownloadName(e))}" title="Download GeoTIFF">↓</a>`}
       <button class="cog-bar-row-remove" data-remove-url="${escHtml(url)}">✕</button>
     </div>`;
   }).join('');
@@ -3346,11 +3696,98 @@ map.on('moveend', renderAllCogs);
 
 // ═══════════════════════════════════════════════════════════════════
 // RESULTS PANEL — DELEGATED EVENT HANDLER
+// WMTS layers live in _cogMap alongside the COG overlays, under a
+// 'wmts:<name>' key and kind 'wmts'. Sharing the registry means the
+// SHEETS ON MAP bar gives them opacity, visibility, toggle-all and
+// clear-all for free, rather than growing a second panel that does the
+// same things slightly differently.
+const _bmKey = name => 'wmts:' + name;
+const bmIsActive = name => _cogMap.has(_bmKey(name));
+
+function _bmIds(name) {
+  const slug = String(name).replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+  return { sourceId: 'bm-' + slug + '-src', layerId: 'bm-' + slug + '-lyr' };
+}
+
+// Bring every card's WMTS button in line with what is actually on the map,
+// so removing a layer from the bar also un-highlights its card.
+function _syncBmButtons() {
+  document.querySelectorAll('[data-bm-layer]').forEach(btn => {
+    const on  = bmIsActive(btn.dataset.bmLayer);
+    btn.classList.toggle('bm-active', on);
+    const lbl = btn.querySelector('.bm-label');
+    if (lbl) lbl.textContent = on ? ' Hide WMTS' : ' Add WMTS';
+  });
+}
+
+// Add or remove the Basemaps tiles for one collection. Unlike a COG overlay
+// this is a served tile pyramid, so there is nothing to fetch or decode —
+// MapLibre streams it like any other raster source, and the entry is 'done'
+// the moment it is added.
+function toggleBasemapsLayer(name, label) {
+  if (bmIsActive(name)) {
+    removeCogOverlay(_bmKey(name));
+    return;
+  }
+
+  const { sourceId, layerId } = _bmIds(name);
+  try {
+    map.addSource(sourceId, {
+      type: 'raster',
+      tiles: [basemapsXyzUrl(name)],
+      tileSize: 256,
+      attribution: 'LINZ Basemaps',
+    });
+    // Insert beneath the click footprint so the outline stays readable.
+    const before = map.getLayer(FP_FILL) ? FP_FILL : undefined;
+    map.addLayer({
+      id: layerId, type: 'raster', source: sourceId,
+      paint: { 'raster-opacity': 1 },
+    }, before);
+    _cogMap.set(_bmKey(name), {
+      kind: 'wmts', basemapsName: name,
+      label: label || name,
+      sourceId, layerId, token: 0, status: 'done',
+      opacity: 1, visible: true,
+    });
+    debugLog(`WMTS layer on: ${name}`);
+  } catch (err) {
+    debugLog(`ERR WMTS layer ${name}: ${String(err.message).slice(0, 60)}`);
+    try { if (map.getSource(sourceId)) map.removeSource(sourceId); } catch (e) {}
+    return;
+  }
+  _updateCogBar();
+  _syncBmButtons();
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // One listener on the results container handles all card interactions.
 // Set up once at page load — not inside appendCard — so it is never
 // lost when resultsEl.innerHTML is cleared between queries.
 // ═══════════════════════════════════════════════════════════════════
 resultsEl.addEventListener('click', e => {
+  // ── LINZ Basemaps tile layer toggle ──────────────────────────────
+  const bmBtn = e.target.closest('[data-bm-layer]');
+  if (bmBtn) {
+    e.stopPropagation();
+    toggleBasemapsLayer(bmBtn.dataset.bmLayer, bmBtn.dataset.bmLabel);
+    return;
+  }
+
+  // ── Desktop GIS layer file download ──────────────────────────────
+  const gisBtn = e.target.closest('[data-gis-file]');
+  if (gisBtn) {
+    e.stopPropagation();
+    const layer = gisBtn.dataset.gisLayer;
+    const title = gisBtn.dataset.gisTitle;
+    if (gisBtn.dataset.gisFile === 'qlr') {
+      downloadTextFile(layer + '.qlr', qgisQlrFor(layer, title), 'application/xml');
+    } else {
+      downloadTextFile(layer + '.lyrx', arcgisLyrxFor(layer, title), 'application/json');
+    }
+    return;
+  }
+
   // ── COG "Open on Map" button ─────────────────────────────────────
   const cogBtn = e.target.closest('[data-cog-url]');
   if (cogBtn) {
@@ -4237,7 +4674,8 @@ document.getElementById('cog-bar-toggle-all').onclick = () => {
 // short stagger between requests to avoid overwhelming the browser/network.
 async function downloadAllCogs() {
   const btn = document.getElementById('cog-bar-dl-all');
-  const done = [..._cogMap.values()].filter(e => e.status === 'done');
+  // WMTS rows are served mosaics, not files — nothing to download.
+  const done = [..._cogMap.values()].filter(e => e.status === 'done' && e.kind !== 'wmts');
   if (!done.length) { debugInfo('No rendered sheets to download'); return; }
 
   btn.disabled = true;
