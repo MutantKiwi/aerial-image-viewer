@@ -1330,20 +1330,47 @@ async function setBasemap(key) {
   const bm = BASEMAPS[key];
   if (!bm) return;
 
-  // Snapshot COG layers before style swap
+  // Snapshot the overlays before the style swap destroys them. kind matters:
+  // a COG is an image source that renderAllCogs refills below, a WMTS layer is
+  // a tile source MapLibre streams on its own.
   const cogSnapshot = [..._cogMap.values()].map(e => ({
     sourceId: e.sourceId, layerId: e.layerId,
     url: e.url,
+    kind: e.kind || 'cog',
+    basemapsName: e.basemapsName,
     visible: e.visible !== false,
     opacity: e.opacity !== undefined ? e.opacity : 0.9,
   }));
   map.setStyle(bm.style);
 
-  // Re-add COG layers + terrain once new style loads
+  // Re-add the overlays once the new style has loaded
   map.once('styledata', () => {
-    // Re-add COG image sources and layers
     cogSnapshot.forEach(snap => {
       try {
+        if (snap.kind === 'wmts') {
+          // Rebuilt as the raster tile source it actually is. Rebuilding it as
+          // an empty image, the way a COG is below, left the layer present but
+          // permanently blank: renderOneCog skips anything with no .image or
+          // .tiff, so nothing ever refilled it.
+          if (!snap.basemapsName) return;
+          if (!map.getSource(snap.sourceId)) {
+            map.addSource(snap.sourceId, {
+              type: 'raster',
+              tiles: [basemapsXyzUrl(snap.basemapsName)],
+              tileSize: 256,
+              attribution: 'LINZ Basemaps',
+            });
+          }
+          if (!map.getLayer(snap.layerId)) {
+            map.addLayer({
+              id: snap.layerId, type: 'raster', source: snap.sourceId,
+              layout: { visibility: snap.visible ? 'visible' : 'none' },
+              paint: { 'raster-opacity': snap.opacity },
+            });
+          }
+          return;
+        }
+
         if (!map.getSource(snap.sourceId)) {
           // Rebuild a minimal image source — actual image re-renders on next moveend
           map.addSource(snap.sourceId, { type: 'image', url: '', coordinates: [[0,0],[0,0],[0,0],[0,0]] });
