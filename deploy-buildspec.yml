@@ -1,0 +1,39 @@
+# Deploy the viewer from GitHub via CodeBuild.
+#
+# For when S3 is not reachable from where you are editing. CodeBuild clones
+# this public repo, prints checksums, and stages both pages to the staging/
+# prefix. Promoting them to the bucket root is a separate, deliberate step:
+# the build role is deliberately denied write access to the published keys,
+# so an unattended or mistaken run cannot replace the live viewer.
+#
+# Run with:
+#   aws codebuild start-build --project-name linz-delta-report \
+#     --source-type-override NO_SOURCE \
+#     --buildspec-override file://deploy-buildspec.yml
+#
+# Then compare the md5sums in the build log against your local files, and
+# promote with a server-side copy (no re-upload):
+#   aws s3 cp s3://gbf.nz.imagery/staging/deploy-index.html \
+#             s3://gbf.nz.imagery/index.html \
+#     --content-type "text/html; charset=utf-8" --cache-control "max-age=300"
+#   aws cloudfront create-invalidation --distribution-id E5CXYG7GQUQ4N \
+#     --paths "/index.html" "/beta.html"
+
+version: 0.2
+
+phases:
+  build:
+    commands:
+      - set -e
+      - git clone --depth 1 --branch main https://github.com/MutantKiwi/aerial-image-viewer m
+      - git clone --depth 1 --branch retrolens https://github.com/MutantKiwi/aerial-image-viewer r
+      - echo "--- checksums to verify against your local copies ---"
+      - md5sum m/index.html r/index.html
+      - wc -c m/index.html r/index.html
+      - >-
+        aws s3 cp m/index.html s3://gbf.nz.imagery/staging/deploy-index.html
+        --content-type "text/html; charset=utf-8" --cache-control "max-age=300"
+      - >-
+        aws s3 cp r/index.html s3://gbf.nz.imagery/staging/deploy-beta.html
+        --content-type "text/html; charset=utf-8" --cache-control "max-age=300"
+      - echo "staged - promote with a server-side copy once the checksums match"
