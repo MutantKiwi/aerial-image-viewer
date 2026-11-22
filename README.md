@@ -109,6 +109,7 @@ Lambda (optional, writes only)
 | Path | What it is |
 |---|---|
 | `index.html` | The whole viewer |
+| `help.html` | The user help page |
 | `lambda/project-link/handler.py` | The project-link shortener |
 | `README.md` | This file |
 
@@ -214,7 +215,9 @@ aws codebuild start-build --project-name linz-delta-report \
   --buildspec-override file://deploy-buildspec.yml
 ```
 
-The buildspec clones `main` and `retrolens`, prints `md5sum` for both, and copies them to `staging/deploy-index.html` and `staging/deploy-beta.html`. Promote by comparing those checksums against the local files, then `CopyObject` to the bucket root.
+The buildspec clones `main` and `retrolens`, prints `md5sum` for each page, and copies them to `staging/deploy-index.html`, `staging/deploy-beta.html` and `staging/deploy-help.html`. Promote by comparing those checksums against the local files, then `CopyObject` to the bucket root.
+
+`help.html` is mostly base64-inlined screenshots, so a change to it re-diffs about 100 KB of blob. Extracting those to separate asset files would make it reviewable, at the cost of changing how the page loads.
 
 ### The project-link Lambda
 

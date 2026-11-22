@@ -28,12 +28,15 @@ phases:
       - git clone --depth 1 --branch main https://github.com/MutantKiwi/aerial-image-viewer m
       - git clone --depth 1 --branch retrolens https://github.com/MutantKiwi/aerial-image-viewer r
       - echo "--- checksums to verify against your local copies ---"
-      - md5sum m/index.html r/index.html
-      - wc -c m/index.html r/index.html
+      - md5sum m/index.html r/index.html m/help.html
+      - wc -c m/index.html r/index.html m/help.html
       - >-
         aws s3 cp m/index.html s3://gbf.nz.imagery/staging/deploy-index.html
         --content-type "text/html; charset=utf-8" --cache-control "max-age=300"
       - >-
         aws s3 cp r/index.html s3://gbf.nz.imagery/staging/deploy-beta.html
+        --content-type "text/html; charset=utf-8" --cache-control "max-age=300"
+      - >-
+        aws s3 cp m/help.html s3://gbf.nz.imagery/staging/deploy-help.html
         --content-type "text/html; charset=utf-8" --cache-control "max-age=300"
       - echo "staged - promote with a server-side copy once the checksums match"
