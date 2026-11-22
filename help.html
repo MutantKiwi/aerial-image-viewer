@@ -23,7 +23,12 @@
     figure.screenshot { margin: 16px 0; }
     figure.screenshot img { max-width: 100%; border-radius: 6px; border: 1px solid #ddd; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: block; }
     figure.screenshot figcaption { font-size: 12px; color: #666; margin-top: 6px; font-style: italic; }
-  </style>
+    .beta { display: inline-block; background: #5b3fd8; color: #fff; font-size: 10px;
+    font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+    padding: 2px 7px; border-radius: 10px; vertical-align: middle; margin-left: 8px; }
+  .beta-note { background: #f3f0ff; border-left: 3px solid #5b3fd8; padding: 9px 14px;
+    margin: 14px 0; border-radius: 0 4px 4px 0; font-size: 13px; }
+</style>
 </head>
 <body>
 
@@ -35,6 +40,11 @@
 <div class="step"><div class="step-num">2</div><div><strong>Navigate to a location</strong> — Pan and zoom the map, or use the <strong>search box</strong> to find a place by name.</div></div>
 <div class="step"><div class="step-num">3</div><div><strong>Click the map</strong> — Click anywhere to query all 621,728 imagery sheets at that location. Results appear in the panel on the right, grouped by region and sorted newest first.</div></div>
 <div class="step"><div class="step-num">4</div><div><strong>Load a sheet</strong> — Click any result card to stream it directly onto the map as a Cloud-Optimised GeoTIFF. No downloads, no waiting.</div></div>
+
+<div class="beta-note"><strong>Some sections below are marked
+<span class="beta">Beta</span>.</strong> Those features live only on the beta viewer at
+<a href="https://imagery.mutant.kiwi/beta.html">imagery.mutant.kiwi/beta.html</a>, which is
+the same map plus historic survey photographs. Everything else on this page works on both.</div>
 
 <h2>Results Panel</h2>
 <p>Results are grouped by region (e.g. <strong>AUCKLAND AERIAL IMAGERY</strong>) with satellite imagery at the bottom. Click a group header to collapse or expand it.</p>
@@ -174,6 +184,64 @@ for desktop GIS work.</div>
   <tr><td>Green</td><td>Red (Band 1)</td><td>Stressed vegetation appears pink or pale</td></tr>
   <tr><td>Blue</td><td>Green (Band 2)</td><td>Water appears dark blue or black</td></tr>
 </table>
+
+<h2>Historic Photos <span class="beta">Beta</span></h2>
+<p>The beta viewer can search a second dataset: roughly 345,000 scanned aerial survey
+photographs from <a href="https://retrolens.co.nz/" target="_blank" rel="noopener">Retrolens</a>,
+going back to the 1930s — decades earlier than the oldest LINZ imagery.</p>
+
+<div class="step"><div class="step-num">1</div><div>Use the <strong>Dataset</strong> dropdown
+at the top left to switch between <em>Aerial Imagery</em> and <em>Retrolens Historic
+Photos</em>.</div></div>
+<div class="step"><div class="step-num">2</div><div>Click the map as usual. Results now show
+photo thumbnails — click one for a full-size view.</div></div>
+<div class="step"><div class="step-num">3</div><div>Open a photo on the map to position it
+over the ground (see below).</div></div>
+
+<div class="tip">Where a survey has since been scanned and properly georeferenced as modern
+imagery, its loose photos are hidden by default — the georeferenced version is better in
+every way, and showing both just clutters the list.</div>
+
+<h2>Georeferencing a Photo <span class="beta">Beta</span></h2>
+<p>A Retrolens scan is just a photograph: it has no idea where it belongs on the map. The
+viewer makes a first guess from the flight record — the camera position, altitude and
+focal length — which usually lands close. You then drag it into place by hand.</p>
+
+<div class="step"><div class="step-num">1</div><div>Open a photo on the map. A panel appears
+at the bottom with the photo's name.</div></div>
+<div class="step"><div class="step-num">2</div><div><strong>Drag the corner dots</strong> to
+stretch the image, or the <strong>square handle</strong> in the middle to move the whole
+thing. The buttons rotate, enlarge and shrink it in small steps.</div></div>
+<div class="step"><div class="step-num">3</div><div>Drop the <strong>Opacity</strong> slider
+to around half so you can see the ground underneath while you line up roads, coastline or
+river bends.</div></div>
+<div class="step"><div class="step-num">4</div><div>Click <strong>Save fit</strong>. Your
+positioning is remembered for that photo and comes back next time you open it.</div></div>
+
+<h3>Getting it out of the browser</h3>
+<table>
+  <tr><th>Button</th><th>What you get</th></tr>
+  <tr><td>World file</td><td>A <code>.jgw</code> and <code>.prj</code> to sit alongside the full-size JPG. Most GIS software reads this pair automatically</td></tr>
+  <tr><td>QGIS points</td><td>A points file for the QGIS Georeferencer — the exact option, see below</td></tr>
+  <tr><td>GDAL</td><td>Copies a ready-made command to your clipboard for building a proper GeoTIFF</td></tr>
+  <tr><td>Reset</td><td>Back to the original guess from the flight record</td></tr>
+</table>
+
+<div class="tip"><strong>World file or QGIS points?</strong> A world file can only describe a
+transform that keeps opposite edges parallel — move, rotate, scale and skew. If you have
+dragged the corners into a genuine trapezoid, which is normal for an oblique photo, no world
+file can reproduce that exactly. The viewer fits the closest one it can and tells you how far
+off it is. If that number matters to you, use <strong>QGIS points</strong> instead, which
+carries your corners exactly.</div>
+
+<div class="tip"><strong>How accurate is this?</strong> Good enough to see what was where;
+not survey grade. Stretching a photo by its four corners cannot undo lens distortion, camera
+tilt, or the way hills lean towards or away from the camera. Expect a good fit on flat ground
+and visible drift in steep country. Treat it as a careful overlay, not a measurement.</div>
+
+<div class="tip">Saved fits live in your own browser, so clearing site data loses them. They do
+travel in a <strong>Save Project</strong> link, which is the way to send a positioned photo to
+someone else — and opening their link will not disturb any fits of your own.</div>
 
 <h2>Basemaps</h2>
 <p>Pick a basemap from the dropdown under the search box. There are two groups: the
